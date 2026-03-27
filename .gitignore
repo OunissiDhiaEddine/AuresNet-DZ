@@ -14,6 +14,7 @@ dist/
 .venv/
 venv/
 env/
+.env
 
 # Data artifacts
 data/raw/
@@ -22,6 +23,8 @@ data/processed/
 checkpoints/
 logs/
 wandb/
+outputs/
+multirun/
 
 # Notebook / editor
 .ipynb_checkpoints/

@@ -17,15 +17,15 @@ time_dim: time
 lat_dim: lat
 lon_dim: lon
 engine: h5netcdf
-chunks_time: 24
+chunks_time: 48
 
-batch_size: 4
-num_workers: 4
+batch_size: 8
+num_workers: 8
 pin_memory: true
 persistent_workers: true
-prefetch_factor: 2
+prefetch_factor: 4
 
-train_split: 0.8
+train_split: 0.85
 val_split: 0.1
-test_split: 0.1
+test_split: 0.05
 split_seed: 42

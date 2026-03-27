@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import hydra
 import pytorch_lightning as pl
 from omegaconf import DictConfig
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from auresnet_dz.data.datamodule import DataConfig, WrfEra5DataModule
@@ -50,14 +50,25 @@ def main(cfg: DictConfig) -> None:
         save_top_k=2,
         save_last=True,
     )
+    early_stopping = EarlyStopping(
+        monitor="val_mae",
+        mode="min",
+        patience=int(cfg.train.early_stopping_patience),
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
     logger = TensorBoardLogger("logs", name=cfg.experiment_name)
 
     trainer = pl.Trainer(
         max_epochs=int(cfg.train.max_epochs),
         accelerator=cfg.train.accelerator,
         devices=cfg.train.devices,
+        num_nodes=int(cfg.train.num_nodes),
+        strategy=cfg.train.strategy,
         precision=cfg.train.precision,
-        callbacks=[ckpt],
+        accumulate_grad_batches=int(cfg.train.accumulate_grad_batches),
+        gradient_clip_val=float(cfg.train.gradient_clip_val),
+        deterministic=bool(cfg.train.deterministic),
+        callbacks=[ckpt, early_stopping, lr_monitor],
         logger=logger,
         log_every_n_steps=int(cfg.train.log_every_n_steps),
     )

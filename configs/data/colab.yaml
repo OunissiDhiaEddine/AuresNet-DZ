@@ -1,5 +1,5 @@
-raw_wrf_glob: data/raw/wrf/*.nc
-raw_era5_glob: data/raw/era5/*.nc
+raw_wrf_glob: /content/drive/MyDrive/AuresNet-DZ/data/raw/wrf/*.nc
+raw_era5_glob: /content/drive/MyDrive/AuresNet-DZ/data/raw/era5/*.nc
 
 input_variables:
   - t2m
@@ -20,12 +20,12 @@ engine: h5netcdf
 chunks_time: 24
 
 batch_size: 4
-num_workers: 4
+num_workers: 2
 pin_memory: true
-persistent_workers: true
+persistent_workers: false
 prefetch_factor: 2
 
-train_split: 0.8
+train_split: 0.85
 val_split: 0.1
-test_split: 0.1
+test_split: 0.05
 split_seed: 42
