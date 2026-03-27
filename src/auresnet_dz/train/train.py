@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import hydra
 import pytorch_lightning as pl
+import torch
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -26,6 +27,12 @@ class ModelConfig:
 def main(cfg: DictConfig) -> None:
     seed_everything(int(cfg.seed))
 
+    torch.set_float32_matmul_precision(str(cfg.train.matmul_precision))
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = bool(cfg.train.cudnn_benchmark)
+        torch.backends.cuda.matmul.allow_tf32 = bool(cfg.train.allow_tf32)
+        torch.backends.cudnn.allow_tf32 = bool(cfg.train.allow_tf32)
+
     data_cfg = DataConfig(**cfg.data)
     datamodule = WrfEra5DataModule(cfg=data_cfg)
 
@@ -36,6 +43,8 @@ def main(cfg: DictConfig) -> None:
         encoder_name=model_cfg.encoder_name,
         encoder_weights=model_cfg.encoder_weights,
     )
+    if bool(cfg.train.torch_compile):
+        net = torch.compile(net, mode=str(cfg.train.torch_compile_mode))
 
     lightning_module = WrfToEra5LightningModule(
         model=net,

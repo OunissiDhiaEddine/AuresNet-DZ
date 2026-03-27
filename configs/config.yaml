@@ -1,7 +1,8 @@
 defaults:
+  - _self_
   - data: default
   - model: unet
-  - train: default
+  - train: local_gpu
 
 seed: 42
 experiment_name: auresnet_dz_baseline

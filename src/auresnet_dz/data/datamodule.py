@@ -22,6 +22,8 @@ class DataConfig:
     input_variables: list[str]
     target_variables: list[str]
     time_dim: str = "time"
+    lat_dim: str = "lat"
+    lon_dim: str = "lon"
     engine: Engine = "h5netcdf"
     chunks_time: int = 24
     batch_size: int = 4

@@ -14,6 +14,10 @@ $$
 - ML: `PyTorch`, `PyTorch Lightning`, `segmentation-models-pytorch` (U-Net)
 - Config: `Hydra` + YAML
 
+## Runtime mode
+
+- Local console only (no cloud/Colab workflow in this repository).
+
 ## Initial project layout
 
 - [configs](configs)
@@ -42,111 +46,66 @@ cp .env.example .env
 python -m auresnet_dz.train.train
 ```
 
-## Cloud full-scale run
-
-Recommended for xesmf stability: conda/mamba environment using [environment.yml](environment.yml).
-
-1) Create env on cloud instance:
+Or with the helper script:
 
 ```bash
-conda env create -f environment.yml
-conda activate auresnet-dz
-pip install -e .
+bash scripts/run_local_gpu.sh
 ```
 
-2) Create local secrets file (never commit):
+## Local RTX training (recommended)
+
+1) Create and activate a local environment:
 
 ```bash
-cp .env.example .env
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-3) Place data on attached storage:
+2) Install dependencies:
+
+```bash
+pip install --upgrade pip
+pip install -e .[dev]
+```
+
+3) Place datasets locally:
 
 - `data/raw/wrf/*.nc`
 - `data/raw/era5/*.nc`
 
-4) Start full-scale training:
+4) Run a smoke test:
 
 ```bash
-bash scripts/run_cloud_full.sh
+bash scripts/run_local_gpu.sh train.max_epochs=1 data.batch_size=1
 ```
 
-5) Optional overrides at launch time:
+5) Run full local training:
 
 ```bash
-bash scripts/run_cloud_full.sh train.max_epochs=200 data.batch_size=12
+bash scripts/run_local_gpu.sh train.max_epochs=120 data.batch_size=8
 ```
 
-Cloud profiles are in:
+### Performance notes (RTX)
 
-- [configs/data/cloud.yaml](configs/data/cloud.yaml)
-- [configs/train/cloud.yaml](configs/train/cloud.yaml)
+- Default training profile is `train: local_gpu` in [configs/config.yaml](configs/config.yaml).
+- It enables mixed precision and local GPU optimizations (TF32 + cuDNN benchmark).
+- If your GPU memory is tight, reduce batch size:
+
+```bash
+bash scripts/run_local_gpu.sh data.batch_size=4
+```
+
+- If memory allows, increase throughput:
+
+```bash
+bash scripts/run_local_gpu.sh data.batch_size=12 data.num_workers=8
+```
 
 ### Important security note
 
 - Keep credentials in `.env` only.
 - `.env` is git-ignored.
-- If a key was exposed previously, rotate it before any upload.
-
-## Google Colab (VS Code extension) full-scale run
-
-Use this when your runtime is Colab and data/checkpoints are stored in Google Drive.
-
-1) In a Colab notebook cell, mount Drive:
-
-```python
-from google.colab import drive
-drive.mount('/content/drive')
-```
-
-2) Clone repo to Colab workspace:
-
-```bash
-%cd /content
-!git clone <YOUR_GITHUB_REPO_URL> AuresNet-DZ
-%cd /content/AuresNet-DZ
-```
-
-3) Install core training dependencies (Colab-safe):
-
-```bash
-!pip install -U pip
-!pip install -e .
-```
-
-If you need regridding with `xesmf`, install optional extra separately (may require additional system setup depending on runtime):
-
-```bash
-!pip install -e .[regrid]
-```
-
-4) Create `.env` locally in Colab runtime:
-
-```bash
-!cp .env.example .env
-```
-
-5) Ensure your data exists in Drive paths:
-
-- `/content/drive/MyDrive/AuresNet-DZ/data/raw/wrf/*.nc`
-- `/content/drive/MyDrive/AuresNet-DZ/data/raw/era5/*.nc`
-
-6) Start full training with Colab profile:
-
-```bash
-!bash scripts/run_colab_full.sh
-```
-
-7) Optional overrides:
-
-```bash
-!bash scripts/run_colab_full.sh train.max_epochs=150 data.batch_size=6
-```
-
-Colab profiles are in:
-
-- [configs/data/colab.yaml](configs/data/colab.yaml)
-- [configs/train/colab.yaml](configs/train/colab.yaml)
+- If a key was exposed previously, rotate it.
 
 ## Data conventions (current default)
 
@@ -158,4 +117,4 @@ Colab profiles are in:
 ## Notes
 
 - Keep raw datasets out of git. Put them under local `data/raw/`.
-- If you later need cloud storage credentials (Copernicus/CDS, object store, etc.), add them to `.env` (never commit secrets).
+- If you use CDS/Copernicus credentials, store them in `.env` (never commit secrets).
