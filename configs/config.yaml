@@ -1,0 +1,7 @@
+defaults:
+  - data: default
+  - model: unet
+  - train: default
+
+seed: 42
+experiment_name: auresnet_dz_baseline

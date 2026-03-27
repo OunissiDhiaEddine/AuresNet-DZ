@@ -1,0 +1,6 @@
+architecture: unet
+encoder_name: resnet34
+encoder_weights: null
+
+in_channels: 4
+out_channels: 4
