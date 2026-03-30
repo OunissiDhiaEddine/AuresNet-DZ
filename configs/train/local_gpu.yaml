@@ -2,6 +2,7 @@ max_epochs: 120
 learning_rate: 0.0002
 weight_decay: 0.00001
 
+require_gpu: true
 accelerator: gpu
 devices: 1
 num_nodes: 1

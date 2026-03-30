@@ -1,22 +1,20 @@
-raw_wrf_glob: data/raw/wrf/*.nc
-raw_era5_glob: data/raw/era5/*.nc
+raw_wrf_glob: data/processed/wrf_aures_ready.nc
+raw_era5_glob: data/processed/era5_aures_ready.nc
 
 input_variables:
   - t2m
   - u10
   - v10
-  - sp
 
 target_variables:
   - t2m
   - u10
   - v10
-  - sp
 
 time_dim: time
 lat_dim: lat
 lon_dim: lon
-engine: h5netcdf
+engine: netcdf4
 chunks_time: 24
 
 batch_size: 4

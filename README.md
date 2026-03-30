@@ -73,13 +73,26 @@ pip install -e .[dev]
 - `data/raw/wrf/*.nc`
 - `data/raw/era5/*.nc`
 
-4) Run a smoke test:
+4) Prepare train-ready aligned files (CORDEX variable mapping + Aures grid alignment):
+
+```bash
+python scripts/prepare_aures_data.py --skip-era5-sp-download
+```
+
+If you have valid CDS credentials in `.env` and want to include `sp` as a 4th channel, run without `--skip-era5-sp-download`.
+
+This writes:
+
+- `data/processed/wrf_aures_ready.nc`
+- `data/processed/era5_aures_ready.nc`
+
+5) Run a smoke test:
 
 ```bash
 bash scripts/run_local_gpu.sh train.max_epochs=1 data.batch_size=1
 ```
 
-5) Run full local training:
+6) Run full local training:
 
 ```bash
 bash scripts/run_local_gpu.sh train.max_epochs=120 data.batch_size=8

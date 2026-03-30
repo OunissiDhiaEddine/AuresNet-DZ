@@ -2,8 +2,9 @@ max_epochs: 30
 learning_rate: 0.0003
 weight_decay: 0.00001
 
-accelerator: auto
-devices: auto
+require_gpu: true
+accelerator: gpu
+devices: 1
 precision: 16-mixed
 num_nodes: 1
 strategy: auto

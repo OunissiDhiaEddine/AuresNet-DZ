@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import hydra
 import pytorch_lightning as pl
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
@@ -21,11 +21,26 @@ class ModelConfig:
     out_channels: int
     encoder_name: str
     encoder_weights: str | None = None
+    architecture: str | None = None
 
 
 @hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     seed_everything(int(cfg.seed))
+
+    require_gpu = bool(cfg.train.require_gpu)
+    accelerator = str(cfg.train.accelerator).lower()
+    if require_gpu:
+        if not torch.cuda.is_available() or torch.cuda.device_count() <= 0 or torch.version.cuda is None:
+            raise RuntimeError(
+                "GPU-only mode is enabled (train.require_gpu=true), but CUDA is not available in the current "
+                "Python environment. Install a CUDA-enabled PyTorch build and run on the RTX GPU."
+            )
+        if accelerator == "cpu":
+            raise ValueError(
+                "GPU-only mode is enabled (train.require_gpu=true), but train.accelerator is set to 'cpu'. "
+                "Use train.accelerator=gpu."
+            )
 
     torch.set_float32_matmul_precision(str(cfg.train.matmul_precision))
     if torch.cuda.is_available():
@@ -33,7 +48,7 @@ def main(cfg: DictConfig) -> None:
         torch.backends.cuda.matmul.allow_tf32 = bool(cfg.train.allow_tf32)
         torch.backends.cudnn.allow_tf32 = bool(cfg.train.allow_tf32)
 
-    data_cfg = DataConfig(**cfg.data)
+    data_cfg = DataConfig(**OmegaConf.to_container(cfg.data, resolve=True))
     datamodule = WrfEra5DataModule(cfg=data_cfg)
 
     model_cfg = ModelConfig(**cfg.model)
