@@ -23,7 +23,6 @@ $$
 - [configs](configs)
 - [src/auresnet_dz](src/auresnet_dz)
 - [scripts](scripts)
-- [tests](tests)
 
 ## Quick start
 
@@ -31,16 +30,10 @@ $$
 2) Install package in editable mode:
 
 ```bash
-pip install -e .[dev]
+pip install -e .
 ```
 
-3) Copy env template:
-
-```bash
-cp .env.example .env
-```
-
-4) Launch training with default configs:
+3) Launch training with default configs:
 
 ```bash
 python -m auresnet_dz.train.train
@@ -65,7 +58,7 @@ source .venv/bin/activate
 
 ```bash
 pip install --upgrade pip
-pip install -e .[dev]
+pip install -e .
 ```
 
 3) Place datasets locally:

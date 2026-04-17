@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import hydra
@@ -14,6 +15,8 @@ from auresnet_dz.models.unet_smp import build_unet
 from auresnet_dz.train.lightning_module import WrfToEra5LightningModule
 from auresnet_dz.utils import seed_everything
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ModelConfig:
@@ -24,9 +27,62 @@ class ModelConfig:
     architecture: str | None = None
 
 
+def verify_training_data(cfg: DictConfig) -> None:
+    """Verify WRF and ERA5 data before training.
+
+    Args:
+        cfg: Hydra configuration
+
+    Raises:
+        RuntimeError: If data verification fails
+    """
+    from auresnet_dz.data.verification import verify_wrf_era5_pair
+
+    logger.info("=" * 70)
+    logger.info("VERIFYING TRAINING DATA")
+    logger.info("=" * 70)
+
+    if not bool(cfg.data.get("verify_data", False)):
+        logger.info("Data verification disabled in config")
+        return
+
+    import glob
+
+    wrf_files = glob.glob(cfg.data.raw_wrf_glob)
+    era5_files = glob.glob(cfg.data.raw_era5_glob)
+
+    if not wrf_files:
+        raise FileNotFoundError(f"No WRF files found for glob: {cfg.data.raw_wrf_glob}")
+    if not era5_files:
+        raise FileNotFoundError(f"No ERA5 files found for glob: {cfg.data.raw_era5_glob}")
+
+    wrf_file = wrf_files[0]
+    era5_file = era5_files[0]
+
+    logger.info(f"Verifying WRF: {wrf_file}")
+    logger.info(f"Verifying ERA5: {era5_file}")
+
+    required_vars = list(set(cfg.data.input_variables + cfg.data.target_variables))
+    report = verify_wrf_era5_pair(wrf_file, era5_file, required_variables=required_vars)
+
+    if not report.is_valid:
+        logger.error("\n" + "=" * 70)
+        logger.error("DATA VERIFICATION FAILED!")
+        logger.error("=" * 70)
+        for error in report.errors:
+            logger.error(f"  ✗ {error}")
+        raise RuntimeError(f"Data verification failed: {'; '.join(report.errors)}")
+
+    logger.info("\n✓ Data verification passed successfully!")
+    logger.info("=" * 70 + "\n")
+
+
 @hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     seed_everything(int(cfg.seed))
+
+    # Verify data before proceeding with training
+    verify_training_data(cfg)
 
     require_gpu = bool(cfg.train.require_gpu)
     accelerator = str(cfg.train.accelerator).lower()

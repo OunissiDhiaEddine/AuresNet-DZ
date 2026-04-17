@@ -27,3 +27,6 @@ train_split: 0.8
 val_split: 0.1
 test_split: 0.1
 split_seed: 42
+
+# Set to true to verify data compatibility before training
+verify_data: false

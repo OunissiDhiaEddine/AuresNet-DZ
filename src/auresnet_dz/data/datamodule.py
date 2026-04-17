@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -10,6 +11,9 @@ from torch.utils.data import DataLoader, Dataset, Subset
 
 from auresnet_dz.data.io import open_mfdataset
 from auresnet_dz.data.pairs import align_time_and_space
+from auresnet_dz.data.verification import verify_wrf_era5_pair
+
+logger = logging.getLogger(__name__)
 
 
 Engine = Literal["netcdf4", "h5netcdf"]
@@ -35,6 +39,8 @@ class DataConfig:
     val_split: float = 0.1
     test_split: float = 0.1
     split_seed: int = 42
+    verify_data: bool = False
+    """If True, verify data compatibility before training."""
 
 
 class LazyWrfEra5Dataset(Dataset):
@@ -79,6 +85,10 @@ class WrfEra5DataModule(pl.LightningDataModule):
         self.test_ds: Dataset | None = None
 
     def setup(self, stage: str | None = None) -> None:
+        if self.cfg.verify_data:
+            logger.info("Running data verification...")
+            self._verify_raw_data()
+
         chunks = {self.cfg.time_dim: self.cfg.chunks_time}
         wrf = open_mfdataset(self.cfg.raw_wrf_glob, engine=self.cfg.engine, chunks=chunks)
         era5 = open_mfdataset(self.cfg.raw_era5_glob, engine=self.cfg.engine, chunks=chunks)
@@ -149,3 +159,35 @@ class WrfEra5DataModule(pl.LightningDataModule):
             shuffle=False,
             **self._loader_kwargs(),
         )
+
+    def _verify_raw_data(self) -> None:
+        """Verify raw WRF and ERA5 data files for compatibility.
+
+        Raises:
+            RuntimeError: If verification fails
+        """
+        import glob
+
+        wrf_files = glob.glob(self.cfg.raw_wrf_glob)
+        era5_files = glob.glob(self.cfg.raw_era5_glob)
+
+        if not wrf_files:
+            raise FileNotFoundError(f"No WRF files found for glob: {self.cfg.raw_wrf_glob}")
+        if not era5_files:
+            raise FileNotFoundError(f"No ERA5 files found for glob: {self.cfg.raw_era5_glob}")
+
+        # Use first file from each glob pattern for verification
+        wrf_file = wrf_files[0]
+        era5_file = era5_files[0]
+
+        report = verify_wrf_era5_pair(
+            wrf_file,
+            era5_file,
+            required_variables=self.cfg.input_variables + self.cfg.target_variables,
+        )
+
+        if not report.is_valid:
+            raise RuntimeError(
+                f"Data verification failed with {len(report.errors)} error(s): "
+                + "; ".join(report.errors)
+            )
