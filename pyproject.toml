@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "auresnet-dz"
 version = "0.1.0"
-description = "WRF/CORDEX to ERA5 post-processing for the Aures (NE Algeria) region"
+description = "CCLM/CORDEX to ERA5 post-processing for the Aures (NE Algeria) region"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -14,6 +14,7 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.2",
   "xarray>=2024.3.0",
+  "cdsapi>=0.7.3",
   "dask[distributed]>=2024.3.0",
   "netCDF4>=1.6.5",
   "h5netcdf>=1.3.0",

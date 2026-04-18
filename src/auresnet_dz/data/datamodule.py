@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset, Subset
 
 from auresnet_dz.data.io import open_mfdataset
 from auresnet_dz.data.pairs import align_time_and_space
-from auresnet_dz.data.verification import verify_wrf_era5_pair
+from auresnet_dz.data.verification import verify_cclm_era5_pair
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ Engine = Literal["netcdf4", "h5netcdf"]
 
 @dataclass
 class DataConfig:
-    raw_wrf_glob: str
+    raw_cclm_glob: str
     raw_era5_glob: str
     input_variables: list[str]
     target_variables: list[str]
@@ -43,29 +43,29 @@ class DataConfig:
     """If True, verify data compatibility before training."""
 
 
-class LazyWrfEra5Dataset(Dataset):
+class LazyCclmEra5Dataset(Dataset):
     """Loads one timestamp sample at a time to avoid full in-memory materialization."""
 
     def __init__(
         self,
-        wrf: xr.Dataset,
+        cclm: xr.Dataset,
         era5: xr.Dataset,
         input_variables: list[str],
         target_variables: list[str],
         time_dim: str,
     ) -> None:
-        self.wrf = wrf
+        self.cclm = cclm
         self.era5 = era5
         self.input_variables = input_variables
         self.target_variables = target_variables
         self.time_dim = time_dim
-        self.n_samples = int(wrf.sizes[time_dim])
+        self.n_samples = int(cclm.sizes[time_dim])
 
     def __len__(self) -> int:
         return self.n_samples
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        x_da = self.wrf[self.input_variables].to_array("channel").isel({self.time_dim: idx})
+        x_da = self.cclm[self.input_variables].to_array("channel").isel({self.time_dim: idx})
         y_da = self.era5[self.target_variables].to_array("channel").isel({self.time_dim: idx})
 
         x_np = x_da.load().transpose("channel", ...).values
@@ -76,7 +76,7 @@ class LazyWrfEra5Dataset(Dataset):
         return x, y
 
 
-class WrfEra5DataModule(pl.LightningDataModule):
+class CclmEra5DataModule(pl.LightningDataModule):
     def __init__(self, cfg: DataConfig) -> None:
         super().__init__()
         self.cfg = cfg
@@ -90,12 +90,12 @@ class WrfEra5DataModule(pl.LightningDataModule):
             self._verify_raw_data()
 
         chunks = {self.cfg.time_dim: self.cfg.chunks_time}
-        wrf = open_mfdataset(self.cfg.raw_wrf_glob, engine=self.cfg.engine, chunks=chunks)
+        cclm = open_mfdataset(self.cfg.raw_cclm_glob, engine=self.cfg.engine, chunks=chunks)
         era5 = open_mfdataset(self.cfg.raw_era5_glob, engine=self.cfg.engine, chunks=chunks)
-        wrf, era5 = align_time_and_space(wrf, era5, time_dim=self.cfg.time_dim)
+        cclm, era5 = align_time_and_space(cclm, era5, time_dim=self.cfg.time_dim)
 
-        full_ds = LazyWrfEra5Dataset(
-            wrf=wrf,
+        full_ds = LazyCclmEra5Dataset(
+            cclm=cclm,
             era5=era5,
             input_variables=self.cfg.input_variables,
             target_variables=self.cfg.target_variables,
@@ -161,27 +161,27 @@ class WrfEra5DataModule(pl.LightningDataModule):
         )
 
     def _verify_raw_data(self) -> None:
-        """Verify raw WRF and ERA5 data files for compatibility.
+        """Verify raw CCLM and ERA5 data files for compatibility.
 
         Raises:
             RuntimeError: If verification fails
         """
         import glob
 
-        wrf_files = glob.glob(self.cfg.raw_wrf_glob)
+        cclm_files = glob.glob(self.cfg.raw_cclm_glob)
         era5_files = glob.glob(self.cfg.raw_era5_glob)
 
-        if not wrf_files:
-            raise FileNotFoundError(f"No WRF files found for glob: {self.cfg.raw_wrf_glob}")
+        if not cclm_files:
+            raise FileNotFoundError(f"No CCLM files found for glob: {self.cfg.raw_cclm_glob}")
         if not era5_files:
             raise FileNotFoundError(f"No ERA5 files found for glob: {self.cfg.raw_era5_glob}")
 
         # Use first file from each glob pattern for verification
-        wrf_file = wrf_files[0]
+        cclm_file = cclm_files[0]
         era5_file = era5_files[0]
 
-        report = verify_wrf_era5_pair(
-            wrf_file,
+        report = verify_cclm_era5_pair(
+            cclm_file,
             era5_file,
             required_variables=self.cfg.input_variables + self.cfg.target_variables,
         )

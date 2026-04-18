@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import glob
-import os
 from pathlib import Path
 
 import numpy as np
@@ -11,55 +10,62 @@ import xarray as xr
 from scipy.spatial import cKDTree
 
 
-WRF_VAR_MAP = {
-    "tas": "t2m",
-    "uas": "u10",
-    "vas": "v10",
-    "ps": "sp",
+SOURCE_VAR_ALIASES: dict[str, tuple[str, ...]] = {
+    # CCLM historical commonly provides tas + sfcWind + psl, while some CORDEX sets may include components.
+    "t2m": ("tas", "t2m"),
+    "wind10": ("sfcWind", "wind10"),
+    "sp": ("ps", "sp", "psl"),
+}
+
+ERA5_VAR_ALIASES: dict[str, tuple[str, ...]] = {
+    "t2m": ("t2m", "2t"),
+    "u10": ("u10", "10u"),
+    "v10": ("v10", "10v"),
+    "sp": ("sp", "surface_pressure"),
 }
 
 
-def _load_dotenv(dotenv_path: Path) -> None:
-    if not dotenv_path.exists():
-        return
-    for line in dotenv_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
-
-
-def _open_wrf_merged(raw_wrf_glob: str) -> xr.Dataset:
-    wrf_files = sorted(glob.glob(raw_wrf_glob))
-    if not wrf_files:
-        raise FileNotFoundError(f"No WRF files found for glob: {raw_wrf_glob}")
+def _open_source_merged(raw_source_glob: str) -> xr.Dataset:
+    source_files = sorted(glob.glob(raw_source_glob))
+    if not source_files:
+        raise FileNotFoundError(f"No source files found for glob: {raw_source_glob}")
 
     pieces: list[xr.Dataset] = []
-    for src_var, dst_var in WRF_VAR_MAP.items():
+    for canonical_var, candidate_vars in SOURCE_VAR_ALIASES.items():
         match = None
-        for path in wrf_files:
-            stem = Path(path).name
-            if f"{src_var}_" in stem or stem.startswith(f"{src_var}.") or stem.startswith(f"{src_var}_"):
-                match = path
+        matched_src_var = None
+        for src_var in candidate_vars:
+            for path in source_files:
+                stem = Path(path).name
+                if f"{src_var}_" in stem or stem.startswith(f"{src_var}.") or stem.startswith(f"{src_var}_"):
+                    match = path
+                    matched_src_var = src_var
+                    break
+            if match is not None:
                 break
-        if match is None:
-            raise ValueError(f"Could not find WRF file for variable '{src_var}' in {raw_wrf_glob}")
+        if match is None or matched_src_var is None:
+            if canonical_var in {"t2m", "wind10"}:
+                raise ValueError(
+                    f"Could not find source file for required variable '{canonical_var}' in {raw_source_glob}"
+                )
+            # Optional channels (e.g., sp) are skipped if unavailable.
+            continue
 
         ds = xr.open_dataset(match)
-        if src_var not in ds.data_vars:
-            raise ValueError(f"Variable '{src_var}' missing in {match}")
+        if matched_src_var not in ds.data_vars:
+            raise ValueError(f"Variable '{matched_src_var}' missing in {match}")
 
-        ds = ds[[src_var]].rename({src_var: dst_var})
+        ds = ds[[matched_src_var]].rename({matched_src_var: canonical_var})
         drop_candidates = [v for v in ["time_bnds", "rotated_pole", "height"] if v in ds.variables]
         if drop_candidates:
             ds = ds.drop_vars(drop_candidates)
         pieces.append(ds)
 
-    wrf = xr.merge(pieces, compat="override")
-    return wrf
+    if not pieces:
+        raise ValueError("No usable source variables were found.")
+
+    source = xr.merge(pieces, compat="override")
+    return source
 
 
 def _normalize_era5(ds: xr.Dataset) -> xr.Dataset:
@@ -76,82 +82,43 @@ def _normalize_era5(ds: xr.Dataset) -> xr.Dataset:
     drop_coords = [c for c in ["number", "expver"] if c in ds.coords]
     if drop_coords:
         ds = ds.drop_vars(drop_coords)
+
+    if "wind10" not in ds.data_vars and "u10" in ds.data_vars and "v10" in ds.data_vars:
+        ds["wind10"] = np.hypot(ds["u10"], ds["v10"])
+
     return ds
 
 
-def _download_era5_sp_if_needed(
-    era5: xr.Dataset,
-    out_path: Path,
-) -> xr.Dataset:
-    if "sp" in era5.data_vars:
-        return era5
+def _canonicalize_era5_variables(ds: xr.Dataset) -> xr.Dataset:
+    rename_map: dict[str, str] = {}
+    for canonical_var, candidate_vars in ERA5_VAR_ALIASES.items():
+        if canonical_var in ds.data_vars:
+            continue
+        for candidate in candidate_vars:
+            if candidate in ds.data_vars:
+                rename_map[candidate] = canonical_var
+                break
 
-    cds_url = os.getenv("CDSAPI_URL", "").strip()
-    cds_key = os.getenv("CDSAPI_KEY", "").strip()
-    if not cds_url or not cds_key:
-        raise RuntimeError(
-            "ERA5 variable 'sp' is missing and CDS credentials are not set (CDSAPI_URL/CDSAPI_KEY)."
-        )
+    if rename_map:
+        ds = ds.rename(rename_map)
 
-    try:
-        import cdsapi
-    except ImportError as exc:
-        raise RuntimeError("cdsapi is required to download ERA5 surface pressure.") from exc
-
-    times = pd.DatetimeIndex(era5["time"].values)
-    years = sorted({f"{t.year:04d}" for t in times})
-    months = sorted({f"{t.month:02d}" for t in times})
-    days = sorted({f"{t.day:02d}" for t in times})
-    hours = [f"{h:02d}:00" for h in range(24)]
-
-    lat_vals = era5["lat"].values
-    lon_vals = era5["lon"].values
-    north = float(np.nanmax(lat_vals))
-    south = float(np.nanmin(lat_vals))
-    west = float(np.nanmin(lon_vals))
-    east = float(np.nanmax(lon_vals))
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    client = cdsapi.Client(url=cds_url, key=cds_key, quiet=True)
-    request = {
-        "product_type": "reanalysis",
-        "variable": "surface_pressure",
-        "year": years,
-        "month": months,
-        "day": days,
-        "time": hours,
-        "area": [north, west, south, east],
-        "format": "netcdf",
-    }
-    client.retrieve("reanalysis-era5-single-levels", request, str(out_path))
-
-    sp = xr.open_dataset(out_path)
-    sp = _normalize_era5(sp)
-    if "sp" not in sp.data_vars:
-        raise RuntimeError("Downloaded ERA5 file did not contain 'sp'.")
-
-    sp = sp[["sp"]]
-    sp = sp.interp(lat=era5["lat"], lon=era5["lon"], method="nearest")
-    sp = sp.sel(time=era5["time"])
-
-    return xr.merge([era5, sp], compat="override")
+    return ds
 
 
-def _regrid_wrf_to_era5_grid(
-    wrf: xr.Dataset,
+def _regrid_cclm_to_era5_grid(
+    source: xr.Dataset,
     target_era5: xr.Dataset,
     variables: list[str],
 ) -> xr.Dataset:
-    if "lat" not in wrf.coords or "lon" not in wrf.coords:
-        raise ValueError("WRF dataset must have 2D lat/lon coordinates.")
-    if "rlat" not in wrf.dims or "rlon" not in wrf.dims:
-        raise ValueError("WRF dataset must expose rlat/rlon dimensions.")
+    if "lat" not in source.coords or "lon" not in source.coords:
+        raise ValueError("Source dataset must have 2D lat/lon coordinates.")
+    if "rlat" not in source.dims or "rlon" not in source.dims:
+        raise ValueError("Source dataset must expose rlat/rlon dimensions.")
     if "lat" not in target_era5.dims or "lon" not in target_era5.dims:
         raise ValueError("ERA5 target grid must use lat/lon dimensions.")
 
-    src_lat = wrf["lat"].values
-    src_lon = wrf["lon"].values
+    src_lat = source["lat"].values
+    src_lon = source["lon"].values
 
     tgt_lat_1d = target_era5["lat"].values
     tgt_lon_1d = target_era5["lon"].values
@@ -169,16 +136,16 @@ def _regrid_wrf_to_era5_grid(
     weights = 1.0 / np.maximum(distances, eps)
     weights = weights / weights.sum(axis=1, keepdims=True)
 
-    n_time = int(wrf.sizes["time"])
+    n_time = int(source.sizes["time"])
     n_lat = int(tgt_lat_1d.shape[0])
     n_lon = int(tgt_lon_1d.shape[0])
 
     out_vars: dict[str, xr.DataArray] = {}
     for var_name in variables:
-        if var_name not in wrf.data_vars:
-            raise ValueError(f"WRF variable missing after rename: {var_name}")
+        if var_name not in source.data_vars:
+            raise ValueError(f"Source variable missing after rename: {var_name}")
 
-        arr = wrf[var_name].transpose("time", "rlat", "rlon").values
+        arr = source[var_name].transpose("time", "rlat", "rlon").values
         flat = arr.reshape(n_time, -1)
 
         gathered = flat[:, indices]
@@ -188,67 +155,64 @@ def _regrid_wrf_to_era5_grid(
         out_vars[var_name] = xr.DataArray(
             out,
             dims=("time", "lat", "lon"),
-            coords={"time": wrf["time"].values, "lat": tgt_lat_1d, "lon": tgt_lon_1d},
+            coords={"time": source["time"].values, "lat": tgt_lat_1d, "lon": tgt_lon_1d},
         )
 
     return xr.Dataset(out_vars)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare CORDEX WRF + ERA5 into train-ready Aures datasets.")
-    parser.add_argument("--raw-wrf-glob", default="data/raw/wrf/*.nc")
+    parser = argparse.ArgumentParser(description="Prepare CCLM/CORDEX source + ERA5 into train-ready Aures datasets.")
+    parser.add_argument("--raw-source-glob", default="data/raw/cclm/*.nc")
     parser.add_argument("--raw-era5-glob", default="data/raw/era5/*.nc")
-    parser.add_argument("--processed-wrf", default="data/processed/wrf_aures_ready.nc")
+    parser.add_argument("--processed-source", default="data/processed/cclm_aures_ready.nc")
     parser.add_argument("--processed-era5", default="data/processed/era5_aures_ready.nc")
-    parser.add_argument("--era5-sp-cache", default="data/raw/era5/era5_sp_download.nc")
-    parser.add_argument("--skip-era5-sp-download", action="store_true")
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[1]
-    _load_dotenv(repo_root / ".env")
-
-    wrf = _open_wrf_merged(args.raw_wrf_glob)
+    source = _open_source_merged(args.raw_source_glob)
 
     era5_files = sorted(glob.glob(args.raw_era5_glob))
     if not era5_files:
         raise FileNotFoundError(f"No ERA5 files found for glob: {args.raw_era5_glob}")
     era5 = xr.open_mfdataset(era5_files, combine="by_coords", parallel=True)
     era5 = _normalize_era5(era5)
+    era5 = _canonicalize_era5_variables(era5)
 
-    required_era5 = ["t2m", "u10", "v10"]
+    required_era5 = ["t2m", "wind10"]
     for var in required_era5:
         if var not in era5.data_vars:
             raise ValueError(f"ERA5 variable missing: {var}")
 
-    if not args.skip_era5_sp_download:
-        era5 = _download_era5_sp_if_needed(era5, Path(args.era5_sp_cache))
+    source_has_sp = "sp" in source.data_vars
+    variables = ["t2m", "wind10"]
+    if source_has_sp and "sp" not in era5.data_vars:
+        raise ValueError("Source includes 'sp' but ERA5 'sp' is missing. Include 'sp' in ERA5 input files.")
 
-    variables = ["t2m", "u10", "v10"]
-    if "sp" in wrf.data_vars and "sp" in era5.data_vars:
+    if source_has_sp:
         variables.append("sp")
 
     era5 = era5[variables]
-    wrf_regridded = _regrid_wrf_to_era5_grid(wrf, era5, variables=variables)
+    source_regridded = _regrid_cclm_to_era5_grid(source, era5, variables=variables)
 
-    wrf_time = pd.DatetimeIndex(wrf_regridded["time"].values)
+    source_time = pd.DatetimeIndex(source_regridded["time"].values)
     era_time = pd.DatetimeIndex(era5["time"].values)
-    common = wrf_time.intersection(era_time)
+    common = source_time.intersection(era_time)
     if len(common) < 3:
         raise ValueError(f"Need at least 3 common timesteps after preprocessing, found {len(common)}")
 
-    wrf_out = wrf_regridded.sel(time=common)
+    source_out = source_regridded.sel(time=common)
     era5_out = era5.sel(time=common)
 
-    processed_wrf = Path(args.processed_wrf)
+    processed_source = Path(args.processed_source)
     processed_era5 = Path(args.processed_era5)
-    processed_wrf.parent.mkdir(parents=True, exist_ok=True)
+    processed_source.parent.mkdir(parents=True, exist_ok=True)
     processed_era5.parent.mkdir(parents=True, exist_ok=True)
 
-    wrf_out.to_netcdf(processed_wrf)
+    source_out.to_netcdf(processed_source)
     era5_out.to_netcdf(processed_era5)
 
     print("Prepared datasets written:")
-    print(f"- WRF : {processed_wrf} -> dims {dict(wrf_out.sizes)} vars {list(wrf_out.data_vars)}")
+    print(f"- CCLM: {processed_source} -> dims {dict(source_out.sizes)} vars {list(source_out.data_vars)}")
     print(f"- ERA5: {processed_era5} -> dims {dict(era5_out.sizes)} vars {list(era5_out.data_vars)}")
     print(f"- Common timesteps: {len(common)}")
 

@@ -1,11 +1,11 @@
 # AuresNet-DZ
 
-Bias-correction / post-processing model for CORDEX-WRF outputs over the Aures region (North-East Algeria), using ERA5 as target truth.
+Bias-correction / post-processing model for CCLM/CORDEX outputs over the Aures region (North-East Algeria), using ERA5 as target truth.
 
 Core mapping objective:
 
 $$
-f(\text{WRF}) \approx \text{ERA5}
+f(\text{CCLM}) \approx \text{ERA5}
 $$
 
 ## Stack
@@ -63,10 +63,21 @@ pip install -e .
 
 3) Place datasets locally:
 
-- `data/raw/wrf/*.nc`
+- `data/raw/cclm/*.nc`
 - `data/raw/era5/*.nc`
 
-4) Prepare train-ready aligned files (CORDEX variable mapping + Aures grid alignment):
+If ERA5 is not downloaded yet, fetch a matching reanalysis subset (1990-2005, Aures bounds, 0.22 deg grid):
+
+```bash
+python scripts/download_era5_cclm_match.py \
+	--start-year 1990 --end-year 2005 \
+	--north 36.5 --south 35.0 --west 4.5 --east 8.5 \
+	--grid 0.22
+```
+
+The script reads CDS credentials from `.env` (if present) and writes yearly NetCDF files to `data/raw/era5/`.
+
+4) Prepare train-ready aligned files (CCLM/CORDEX variable mapping + Aures grid alignment):
 
 ```bash
 python scripts/prepare_aures_data.py --skip-era5-sp-download
@@ -76,7 +87,7 @@ If you have valid CDS credentials in `.env` and want to include `sp` as a 4th ch
 
 This writes:
 
-- `data/processed/wrf_aures_ready.nc`
+- `data/processed/cclm_aures_ready.nc`
 - `data/processed/era5_aures_ready.nc`
 
 5) Run a smoke test:
@@ -115,9 +126,10 @@ bash scripts/run_local_gpu.sh data.batch_size=12 data.num_workers=8
 
 ## Data conventions (current default)
 
-- Inputs: WRF variables in netCDF
+- Inputs: CCLM variables in netCDF (`tas`, `sfcWind`, optional pressure)
 - Targets: ERA5 variables in netCDF
-- Spatial alignment: regridding via `xesmf`
+- Canonical channels: `t2m`, `wind10` (optional `sp`)
+- Spatial alignment: IDW regridding on the Aures ERA5 grid
 - Temporal alignment: intersection on timestamps
 
 ## Notes

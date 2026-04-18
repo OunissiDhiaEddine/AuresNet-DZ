@@ -1,15 +1,13 @@
-raw_wrf_glob: data/processed/wrf_aures_ready.nc
+raw_cclm_glob: data/processed/cclm_aures_ready.nc
 raw_era5_glob: data/processed/era5_aures_ready.nc
 
 input_variables:
   - t2m
-  - u10
-  - v10
+  - wind10
 
 target_variables:
   - t2m
-  - u10
-  - v10
+  - wind10
 
 time_dim: time
 lat_dim: lat

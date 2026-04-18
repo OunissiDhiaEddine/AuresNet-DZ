@@ -11,11 +11,13 @@ import xarray as xr
 
 logger = logging.getLogger(__name__)
 
-WRF_TO_ERA5_VAR_MAP: dict[str, str] = {
+CCLM_TO_ERA5_VAR_MAP: dict[str, str] = {
     "tas": "t2m",
     "uas": "u10",
     "vas": "v10",
     "ps": "sp",
+    "psl": "sp",
+    "sfcWind": "wind10",
 }
 
 
@@ -26,7 +28,7 @@ class DataQualityReport:
     is_valid: bool
     errors: list[str]
     warnings: list[str]
-    wrf_info: dict
+    cclm_info: dict
     era5_info: dict
     alignment_info: dict
 
@@ -36,7 +38,7 @@ def check_dataset_integrity(ds: xr.Dataset, dataset_type: str = "dataset") -> tu
 
     Args:
         ds: xarray Dataset to check
-        dataset_type: 'WRF' or 'ERA5' for custom checks
+        dataset_type: 'CCLM' or 'ERA5' for custom checks
 
     Returns:
         Tuple of (is_valid, error_messages)
@@ -49,15 +51,15 @@ def check_dataset_integrity(ds: xr.Dataset, dataset_type: str = "dataset") -> tu
     if "time" not in ds.dims:
         errors.append(f"Missing required dimension 'time' in {dataset_type}")
 
-    if ds_type == "wrf":
-        has_wrf_grid = ("rlat" in ds.dims and "rlon" in ds.dims)
+    if ds_type == "cclm":
+        has_cclm_grid = ("rlat" in ds.dims and "rlon" in ds.dims)
         has_geo_grid = (
             ("lat" in ds.dims and "lon" in ds.dims)
             or ("latitude" in ds.dims and "longitude" in ds.dims)
             or ("lat" in ds.coords and "lon" in ds.coords)
             or ("latitude" in ds.coords and "longitude" in ds.coords)
         )
-        if not (has_wrf_grid or has_geo_grid):
+        if not (has_cclm_grid or has_geo_grid):
             errors.append(
                 f"Missing spatial grid in {dataset_type}: expected rlat/rlon or lat/lon coordinates"
             )
@@ -87,11 +89,11 @@ def check_dataset_integrity(ds: xr.Dataset, dataset_type: str = "dataset") -> tu
     return len(errors) == 0, errors
 
 
-def check_time_alignment(wrf_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool, list[str], pd.DatetimeIndex]:
-    """Check if WRF and ERA5 datasets have compatible time dimensions.
+def check_time_alignment(cclm_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool, list[str], pd.DatetimeIndex]:
+    """Check if CCLM and ERA5 datasets have compatible time dimensions.
 
     Args:
-        wrf_ds: WRF xarray Dataset
+        cclm_ds: CCLM xarray Dataset
         era5_ds: ERA5 xarray Dataset
 
     Returns:
@@ -99,11 +101,11 @@ def check_time_alignment(wrf_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool,
     """
     errors = []
 
-    wrf_time = pd.DatetimeIndex(wrf_ds["time"].values)
+    cclm_time = pd.DatetimeIndex(cclm_ds["time"].values)
     era5_time = pd.DatetimeIndex(era5_ds["time"].values)
 
-    if len(wrf_time) == 0:
-        errors.append("WRF dataset has no time steps")
+    if len(cclm_time) == 0:
+        errors.append("CCLM dataset has no time steps")
 
     if len(era5_time) == 0:
         errors.append("ERA5 dataset has no time steps")
@@ -111,30 +113,30 @@ def check_time_alignment(wrf_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool,
     if errors:
         return False, errors, pd.DatetimeIndex([])
 
-    wrf_years = set(wrf_time.year)
+    cclm_years = set(cclm_time.year)
     era5_years = set(era5_time.year)
-    common_years = wrf_years.intersection(era5_years)
+    common_years = cclm_years.intersection(era5_years)
 
     if not common_years:
         errors.append(
-            f"No year overlap: WRF years {sorted(wrf_years)}, ERA5 years {sorted(era5_years)}"
+            f"No year overlap: CCLM years {sorted(cclm_years)}, ERA5 years {sorted(era5_years)}"
         )
         return False, errors, pd.DatetimeIndex([])
 
-    if len(common_years) < len(wrf_years) or len(common_years) < len(era5_years):
-        missing_wrf = era5_years - wrf_years
-        missing_era5 = wrf_years - era5_years
-        if missing_wrf:
-            logger.warning(f"ERA5 has years not in WRF: {sorted(missing_era5)}")
+    if len(common_years) < len(cclm_years) or len(common_years) < len(era5_years):
+        missing_cclm = era5_years - cclm_years
+        missing_era5 = cclm_years - era5_years
+        if missing_cclm:
+            logger.warning(f"ERA5 has years not in CCLM: {sorted(missing_cclm)}")
         if missing_era5:
-            logger.warning(f"WRF has years not in ERA5: {sorted(missing_wrf)}")
+            logger.warning(f"CCLM has years not in ERA5: {sorted(missing_era5)}")
 
-    common_times = wrf_time.intersection(era5_time)
+    common_times = cclm_time.intersection(era5_time)
 
     if len(common_times) == 0:
         errors.append(
             f"No common timestamps found. "
-            f"WRF: {wrf_time[0]} to {wrf_time[-1]}, "
+            f"CCLM: {cclm_time[0]} to {cclm_time[-1]}, "
             f"ERA5: {era5_time[0]} to {era5_time[-1]}"
         )
     elif len(common_times) < 3:
@@ -143,11 +145,11 @@ def check_time_alignment(wrf_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool,
     return len(errors) == 0, errors, common_times
 
 
-def check_spatial_alignment(wrf_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool, list[str], list[str]]:
-    """Check if WRF and ERA5 have compatible spatial grids.
+def check_spatial_alignment(cclm_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bool, list[str], list[str]]:
+    """Check if CCLM and ERA5 have compatible spatial grids.
 
     Args:
-        wrf_ds: WRF xarray Dataset
+        cclm_ds: CCLM xarray Dataset
         era5_ds: ERA5 xarray Dataset
 
     Returns:
@@ -157,75 +159,75 @@ def check_spatial_alignment(wrf_ds: xr.Dataset, era5_ds: xr.Dataset) -> tuple[bo
     warnings = []
 
     # Get spatial dimensions
-    wrf_lat_dim = "lat" if "lat" in wrf_ds.dims else "rlat"
-    wrf_lon_dim = "lon" if "lon" in wrf_ds.dims else "rlon"
+    cclm_lat_dim = "lat" if "lat" in cclm_ds.dims else "rlat"
+    cclm_lon_dim = "lon" if "lon" in cclm_ds.dims else "rlon"
     era5_lat_dim = "lat" if "lat" in era5_ds.dims else "latitude"
     era5_lon_dim = "lon" if "lon" in era5_ds.dims else "longitude"
 
-    wrf_nlat = wrf_ds.sizes.get(wrf_lat_dim)
-    wrf_nlon = wrf_ds.sizes.get(wrf_lon_dim)
+    cclm_nlat = cclm_ds.sizes.get(cclm_lat_dim)
+    cclm_nlon = cclm_ds.sizes.get(cclm_lon_dim)
     era5_nlat = era5_ds.sizes.get(era5_lat_dim)
     era5_nlon = era5_ds.sizes.get(era5_lon_dim)
 
-    if wrf_nlat is None or wrf_nlon is None:
-        errors.append(f"Cannot determine WRF spatial dimensions")
+    if cclm_nlat is None or cclm_nlon is None:
+        errors.append(f"Cannot determine CCLM spatial dimensions")
     if era5_nlat is None or era5_nlon is None:
         errors.append(f"Cannot determine ERA5 spatial dimensions")
 
-    if wrf_nlat and era5_nlat:
-        if abs(wrf_nlat - era5_nlat) > 2:
+    if cclm_nlat and era5_nlat:
+        if abs(cclm_nlat - era5_nlat) > 2:
             warnings.append(
-                f"Different latitude grid sizes: WRF={wrf_nlat}, ERA5={era5_nlat}"
+                f"Different latitude grid sizes: CCLM={cclm_nlat}, ERA5={era5_nlat}"
             )
 
-    if wrf_nlon and era5_nlon:
-        if abs(wrf_nlon - era5_nlon) > 2:
+    if cclm_nlon and era5_nlon:
+        if abs(cclm_nlon - era5_nlon) > 2:
             warnings.append(
-                f"Different longitude grid sizes: WRF={wrf_nlon}, ERA5={era5_nlon}"
+                f"Different longitude grid sizes: CCLM={cclm_nlon}, ERA5={era5_nlon}"
             )
 
     # Check coordinate bounds
-    if "lat" in wrf_ds.coords and "lon" in wrf_ds.coords:
-        wrf_lat = wrf_ds["lat"].values
-        wrf_lon = wrf_ds["lon"].values
-    elif "latitude" in wrf_ds.coords and "longitude" in wrf_ds.coords:
-        wrf_lat = wrf_ds["latitude"].values
-        wrf_lon = wrf_ds["longitude"].values
+    if "lat" in cclm_ds.coords and "lon" in cclm_ds.coords:
+        cclm_lat = cclm_ds["lat"].values
+        cclm_lon = cclm_ds["lon"].values
+    elif "latitude" in cclm_ds.coords and "longitude" in cclm_ds.coords:
+        cclm_lat = cclm_ds["latitude"].values
+        cclm_lon = cclm_ds["longitude"].values
     else:
-        wrf_lat = wrf_ds[wrf_lat_dim].values
-        wrf_lon = wrf_ds[wrf_lon_dim].values
+        cclm_lat = cclm_ds[cclm_lat_dim].values
+        cclm_lon = cclm_ds[cclm_lon_dim].values
 
     era5_lat = era5_ds[era5_lat_dim].values
     era5_lon = era5_ds[era5_lon_dim].values
 
-    wrf_lat_range = (np.nanmin(wrf_lat), np.nanmax(wrf_lat))
-    wrf_lon_range = (np.nanmin(wrf_lon), np.nanmax(wrf_lon))
+    cclm_lat_range = (np.nanmin(cclm_lat), np.nanmax(cclm_lat))
+    cclm_lon_range = (np.nanmin(cclm_lon), np.nanmax(cclm_lon))
     era5_lat_range = (np.nanmin(era5_lat), np.nanmax(era5_lat))
     era5_lon_range = (np.nanmin(era5_lon), np.nanmax(era5_lon))
 
-    # WRF should be within or close to ERA5 spatial domain
-    if wrf_lat_range[0] < era5_lat_range[0] - 1 or wrf_lat_range[1] > era5_lat_range[1] + 1:
+    # CCLM should be within or close to ERA5 spatial domain
+    if cclm_lat_range[0] < era5_lat_range[0] - 1 or cclm_lat_range[1] > era5_lat_range[1] + 1:
         warnings.append(
-            f"WRF latitude range {wrf_lat_range} extends beyond ERA5 range {era5_lat_range}"
+            f"CCLM latitude range {cclm_lat_range} extends beyond ERA5 range {era5_lat_range}"
         )
 
-    if wrf_lon_range[0] < era5_lon_range[0] - 1 or wrf_lon_range[1] > era5_lon_range[1] + 1:
+    if cclm_lon_range[0] < era5_lon_range[0] - 1 or cclm_lon_range[1] > era5_lon_range[1] + 1:
         warnings.append(
-            f"WRF longitude range {wrf_lon_range} extends beyond ERA5 range {era5_lon_range}"
+            f"CCLM longitude range {cclm_lon_range} extends beyond ERA5 range {era5_lon_range}"
         )
 
     return len(errors) == 0, errors, warnings
 
 
 def check_variables(
-    wrf_ds: xr.Dataset,
+    cclm_ds: xr.Dataset,
     era5_ds: xr.Dataset,
     required_variables: list[str] | None = None,
 ) -> tuple[bool, list[str], list[str]]:
     """Check if required variables are present in both datasets.
 
     Args:
-        wrf_ds: WRF xarray Dataset
+        cclm_ds: CCLM xarray Dataset
         era5_ds: ERA5 xarray Dataset
         required_variables: Variables that must be in both datasets
 
@@ -235,33 +237,33 @@ def check_variables(
     if required_variables is None:
         required_variables = ["t2m", "u10", "v10"]
 
-    wrf_vars_raw = set(wrf_ds.data_vars)
-    wrf_vars = {WRF_TO_ERA5_VAR_MAP.get(v, v) for v in wrf_vars_raw}
+    cclm_vars_raw = set(cclm_ds.data_vars)
+    cclm_vars = {CCLM_TO_ERA5_VAR_MAP.get(v, v) for v in cclm_vars_raw}
     era5_vars = set(era5_ds.data_vars)
 
-    missing_wrf = [v for v in required_variables if v not in wrf_vars]
+    missing_cclm = [v for v in required_variables if v not in cclm_vars]
     missing_era5 = [v for v in required_variables if v not in era5_vars]
 
     errors = []
-    if missing_wrf:
-        errors.append(f"WRF missing variables: {missing_wrf}")
+    if missing_cclm:
+        errors.append(f"CCLM missing variables: {missing_cclm}")
     if missing_era5:
         errors.append(f"ERA5 missing variables: {missing_era5}")
 
-    common_vars = [v for v in required_variables if v in wrf_vars and v in era5_vars]
+    common_vars = [v for v in required_variables if v in cclm_vars and v in era5_vars]
 
     return len(errors) == 0, errors, common_vars
 
 
-def verify_wrf_era5_pair(
-    wrf_path: str | Path,
+def verify_cclm_era5_pair(
+    cclm_path: str | Path,
     era5_path: str | Path,
     required_variables: list[str] | None = None,
 ) -> DataQualityReport:
-    """Comprehensive verification of WRF and ERA5 dataset pair.
+    """Comprehensive verification of CCLM and ERA5 dataset pair.
 
     Args:
-        wrf_path: Path to WRF netCDF file
+        cclm_path: Path to CCLM netCDF file
         era5_path: Path to ERA5 netCDF file
         required_variables: List of required variables (default: ['t2m', 'u10', 'v10'])
 
@@ -273,24 +275,24 @@ def verify_wrf_era5_pair(
 
     errors = []
     warnings = []
-    wrf_info = {}
+    cclm_info = {}
     era5_info = {}
     alignment_info = {}
 
     # Load datasets
     try:
-        wrf_ds = xr.open_dataset(wrf_path)
-        wrf_info["path"] = str(wrf_path)
-        wrf_info["shape"] = dict(wrf_ds.sizes)
-        wrf_info["variables"] = list(wrf_ds.data_vars)
-        logger.info(f"Loaded WRF dataset: {wrf_info['shape']}")
+        cclm_ds = xr.open_dataset(cclm_path)
+        cclm_info["path"] = str(cclm_path)
+        cclm_info["shape"] = dict(cclm_ds.sizes)
+        cclm_info["variables"] = list(cclm_ds.data_vars)
+        logger.info(f"Loaded CCLM dataset: {cclm_info['shape']}")
     except Exception as e:
-        errors.append(f"Failed to load WRF: {e}")
+        errors.append(f"Failed to load CCLM: {e}")
         return DataQualityReport(
             is_valid=False,
             errors=errors,
             warnings=warnings,
-            wrf_info=wrf_info,
+            cclm_info=cclm_info,
             era5_info=era5_info,
             alignment_info=alignment_info,
         )
@@ -307,41 +309,41 @@ def verify_wrf_era5_pair(
             is_valid=False,
             errors=errors,
             warnings=warnings,
-            wrf_info=wrf_info,
+            cclm_info=cclm_info,
             era5_info=era5_info,
             alignment_info=alignment_info,
         )
 
     # Check integrity
-    wrf_ok, wrf_errs = check_dataset_integrity(wrf_ds, "WRF")
-    if not wrf_ok:
-        errors.extend(wrf_errs)
+    cclm_ok, cclm_errs = check_dataset_integrity(cclm_ds, "CCLM")
+    if not cclm_ok:
+        errors.extend(cclm_errs)
 
     era5_ok, era5_errs = check_dataset_integrity(era5_ds, "ERA5")
     if not era5_ok:
         errors.extend(era5_errs)
 
     # Check time alignment
-    time_ok, time_errs, common_times = check_time_alignment(wrf_ds, era5_ds)
+    time_ok, time_errs, common_times = check_time_alignment(cclm_ds, era5_ds)
     if not time_ok:
         errors.extend(time_errs)
     else:
         alignment_info["common_times"] = len(common_times)
         alignment_info["time_range"] = (str(common_times[0]), str(common_times[-1]))
-        wrf_time = pd.DatetimeIndex(wrf_ds["time"].values)
+        cclm_time = pd.DatetimeIndex(cclm_ds["time"].values)
         era5_time = pd.DatetimeIndex(era5_ds["time"].values)
-        alignment_info["wrf_years"] = sorted(set(wrf_time.year))
+        alignment_info["cclm_years"] = sorted(set(cclm_time.year))
         alignment_info["era5_years"] = sorted(set(era5_time.year))
         logger.info(f"Common timestamps: {len(common_times)}")
 
     # Check spatial alignment
-    spatial_ok, spatial_errors, spatial_warnings = check_spatial_alignment(wrf_ds, era5_ds)
+    spatial_ok, spatial_errors, spatial_warnings = check_spatial_alignment(cclm_ds, era5_ds)
     if not spatial_ok:
         errors.extend(spatial_errors)
     warnings.extend(spatial_warnings)
 
     # Check variables
-    vars_ok, var_errs, common_vars = check_variables(wrf_ds, era5_ds, required_variables)
+    vars_ok, var_errs, common_vars = check_variables(cclm_ds, era5_ds, required_variables)
     if not vars_ok:
         errors.extend(var_errs)
     alignment_info["common_variables"] = common_vars
@@ -352,7 +354,7 @@ def verify_wrf_era5_pair(
         is_valid=overall_valid,
         errors=errors,
         warnings=warnings,
-        wrf_info=wrf_info,
+        cclm_info=cclm_info,
         era5_info=era5_info,
         alignment_info=alignment_info,
     )
@@ -369,10 +371,10 @@ def _log_report(report: DataQualityReport) -> None:
     logger.info("DATA VERIFICATION REPORT")
     logger.info("=" * 70)
 
-    logger.info("\nWRF Dataset:")
-    logger.info(f"  Path: {report.wrf_info.get('path', 'N/A')}")
-    logger.info(f"  Shape: {report.wrf_info.get('shape', 'N/A')}")
-    logger.info(f"  Variables: {report.wrf_info.get('variables', [])}")
+    logger.info("\nCCLM Dataset:")
+    logger.info(f"  Path: {report.cclm_info.get('path', 'N/A')}")
+    logger.info(f"  Shape: {report.cclm_info.get('shape', 'N/A')}")
+    logger.info(f"  Variables: {report.cclm_info.get('variables', [])}")
 
     logger.info("\nERA5 Dataset:")
     logger.info(f"  Path: {report.era5_info.get('path', 'N/A')}")
@@ -402,3 +404,5 @@ def _log_report(report: DataQualityReport) -> None:
         logger.error("\n✗ Data verification FAILED")
 
     logger.info("=" * 70)
+
+

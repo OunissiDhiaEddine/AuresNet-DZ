@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 
 
-class WrfToEra5LightningModule(pl.LightningModule):
+class CclmToEra5LightningModule(pl.LightningModule):
     def __init__(self, model: torch.nn.Module, learning_rate: float = 3e-4, weight_decay: float = 1e-5) -> None:
         super().__init__()
         self.model = model

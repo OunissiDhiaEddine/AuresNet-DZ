@@ -2,5 +2,5 @@ architecture: unet
 encoder_name: resnet34
 encoder_weights: null
 
-in_channels: 3
-out_channels: 3
+in_channels: 2
+out_channels: 2

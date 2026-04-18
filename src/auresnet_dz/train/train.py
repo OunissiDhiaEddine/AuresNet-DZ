@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any, cast
 
 import hydra
 import pytorch_lightning as pl
@@ -10,9 +11,9 @@ from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from auresnet_dz.data.datamodule import DataConfig, WrfEra5DataModule
+from auresnet_dz.data.datamodule import CclmEra5DataModule, DataConfig
 from auresnet_dz.models.unet_smp import build_unet
-from auresnet_dz.train.lightning_module import WrfToEra5LightningModule
+from auresnet_dz.train.lightning_module import CclmToEra5LightningModule
 from auresnet_dz.utils import seed_everything
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class ModelConfig:
 
 
 def verify_training_data(cfg: DictConfig) -> None:
-    """Verify WRF and ERA5 data before training.
+    """Verify CCLM and ERA5 data before training.
 
     Args:
         cfg: Hydra configuration
@@ -36,7 +37,7 @@ def verify_training_data(cfg: DictConfig) -> None:
     Raises:
         RuntimeError: If data verification fails
     """
-    from auresnet_dz.data.verification import verify_wrf_era5_pair
+    from auresnet_dz.data.verification import verify_cclm_era5_pair
 
     logger.info("=" * 70)
     logger.info("VERIFYING TRAINING DATA")
@@ -48,22 +49,22 @@ def verify_training_data(cfg: DictConfig) -> None:
 
     import glob
 
-    wrf_files = glob.glob(cfg.data.raw_wrf_glob)
+    cclm_files = glob.glob(cfg.data.raw_cclm_glob)
     era5_files = glob.glob(cfg.data.raw_era5_glob)
 
-    if not wrf_files:
-        raise FileNotFoundError(f"No WRF files found for glob: {cfg.data.raw_wrf_glob}")
+    if not cclm_files:
+        raise FileNotFoundError(f"No CCLM files found for glob: {cfg.data.raw_cclm_glob}")
     if not era5_files:
         raise FileNotFoundError(f"No ERA5 files found for glob: {cfg.data.raw_era5_glob}")
 
-    wrf_file = wrf_files[0]
+    cclm_file = cclm_files[0]
     era5_file = era5_files[0]
 
-    logger.info(f"Verifying WRF: {wrf_file}")
+    logger.info(f"Verifying CCLM: {cclm_file}")
     logger.info(f"Verifying ERA5: {era5_file}")
 
     required_vars = list(set(cfg.data.input_variables + cfg.data.target_variables))
-    report = verify_wrf_era5_pair(wrf_file, era5_file, required_variables=required_vars)
+    report = verify_cclm_era5_pair(cclm_file, era5_file, required_variables=required_vars)
 
     if not report.is_valid:
         logger.error("\n" + "=" * 70)
@@ -104,8 +105,14 @@ def main(cfg: DictConfig) -> None:
         torch.backends.cuda.matmul.allow_tf32 = bool(cfg.train.allow_tf32)
         torch.backends.cudnn.allow_tf32 = bool(cfg.train.allow_tf32)
 
-    data_cfg = DataConfig(**OmegaConf.to_container(cfg.data, resolve=True))
-    datamodule = WrfEra5DataModule(cfg=data_cfg)
+    data_cfg_dict = cast(dict[str, Any], OmegaConf.to_container(cfg.data, resolve=True))
+    data_cfg = DataConfig(**data_cfg_dict)
+    datamodule = CclmEra5DataModule(cfg=data_cfg)
+
+    expected_in_channels = len(data_cfg.input_variables)
+    expected_out_channels = len(data_cfg.target_variables)
+    cfg.model.in_channels = expected_in_channels
+    cfg.model.out_channels = expected_out_channels
 
     model_cfg = ModelConfig(**cfg.model)
     net = build_unet(
@@ -116,8 +123,9 @@ def main(cfg: DictConfig) -> None:
     )
     if bool(cfg.train.torch_compile):
         net = torch.compile(net, mode=str(cfg.train.torch_compile_mode))
+    net = cast(torch.nn.Module, net)
 
-    lightning_module = WrfToEra5LightningModule(
+    lightning_module = CclmToEra5LightningModule(
         model=net,
         learning_rate=float(cfg.train.learning_rate),
         weight_decay=float(cfg.train.weight_decay),
