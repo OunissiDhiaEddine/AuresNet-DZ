@@ -66,17 +66,6 @@ pip install -e .
 - `data/raw/cclm/*.nc`
 - `data/raw/era5/*.nc`
 
-If ERA5 is not downloaded yet, fetch a matching reanalysis subset (1990-2005, Aures bounds, 0.22 deg grid):
-
-```bash
-python scripts/download_era5_cclm_match.py \
-	--start-year 1990 --end-year 2005 \
-	--north 36.5 --south 35.0 --west 4.5 --east 8.5 \
-	--grid 0.22
-```
-
-The script reads CDS credentials from `.env` (if present) and writes yearly NetCDF files to `data/raw/era5/`.
-
 4) Prepare train-ready aligned files (CCLM/CORDEX variable mapping + Aures grid alignment):
 
 ```bash
