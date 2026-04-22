@@ -1,4 +1,4 @@
-raw_cclm_glob: data/processed/cclm_aures_ready.nc
+raw_gfs_glob: data/processed/gfs_aures_ready.nc
 raw_era5_glob: data/processed/era5_aures_ready.nc
 
 input_variables:

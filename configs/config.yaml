@@ -5,4 +5,4 @@ defaults:
   - train: local_gpu
 
 seed: 42
-experiment_name: auresnet_dz_baseline
+experiment_name: auresnet_dz_gfs_baseline

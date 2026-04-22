@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "auresnet-dz"
 version = "0.1.0"
-description = "CCLM/CORDEX to ERA5 post-processing for the Aures (NE Algeria) region"
+description = "GFS to ERA5 post-processing for the Aures (NE Algeria) region"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

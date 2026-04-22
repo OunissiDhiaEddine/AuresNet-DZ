@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import re
 from pathlib import Path
 
 import numpy as np
@@ -10,11 +11,11 @@ import xarray as xr
 from scipy.spatial import cKDTree
 
 
-SOURCE_VAR_ALIASES: dict[str, tuple[str, ...]] = {
-    # CCLM historical commonly provides tas + sfcWind + psl, while some CORDEX sets may include components.
-    "t2m": ("tas", "t2m"),
-    "wind10": ("sfcWind", "wind10"),
-    "sp": ("ps", "sp", "psl"),
+GFS_VAR_ALIASES: dict[str, tuple[str, ...]] = {
+    "t2m": ("t2m", "2t"),
+    "u10": ("u10", "10u"),
+    "v10": ("v10", "10v"),
+    "sp": ("sp", "surface_pressure"),
 }
 
 ERA5_VAR_ALIASES: dict[str, tuple[str, ...]] = {
@@ -25,51 +26,92 @@ ERA5_VAR_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _open_source_merged(raw_source_glob: str) -> xr.Dataset:
-    source_files = sorted(glob.glob(raw_source_glob))
+def _extract_time_value(ds: xr.Dataset, path: str) -> pd.Timestamp:
+    if "valid_time" in ds.coords:
+        return pd.Timestamp(pd.to_datetime(ds["valid_time"].values))
+    if "time" in ds.coords:
+        return pd.Timestamp(pd.to_datetime(ds["time"].values))
+
+    match = re.search(r"gfs_(\d{8})_(\d{2})_f(\d{3})", Path(path).stem, flags=re.IGNORECASE)
+    if match:
+        init_time = pd.Timestamp(f"{match.group(1)} {match.group(2)}:00:00")
+        return init_time + pd.to_timedelta(int(match.group(3)), unit="h")
+
+    raise ValueError(f"Could not determine valid time for source file: {path}")
+
+
+def _canonicalize_variables(ds: xr.Dataset, aliases: dict[str, tuple[str, ...]]) -> xr.Dataset:
+    rename_map: dict[str, str] = {}
+    for canonical_var, candidate_vars in aliases.items():
+        if canonical_var in ds.data_vars:
+            continue
+        for candidate in candidate_vars:
+            if candidate in ds.data_vars:
+                rename_map[candidate] = canonical_var
+                break
+
+    if rename_map:
+        ds = ds.rename(rename_map)
+
+    return ds
+
+
+def _normalize_gfs(ds: xr.Dataset) -> xr.Dataset:
+    rename_dims: dict[str, str] = {}
+    if "latitude" in ds.dims:
+        rename_dims["latitude"] = "lat"
+    if "longitude" in ds.dims:
+        rename_dims["longitude"] = "lon"
+    if rename_dims:
+        ds = ds.rename(rename_dims)
+
+    drop_coords = [c for c in ["step", "heightAboveGround", "surface"] if c in ds.coords]
+    if drop_coords:
+        ds = ds.drop_vars(drop_coords)
+
+    return ds
+
+
+def _open_gfs_merged(raw_source_glob: str) -> xr.Dataset:
+    source_files = sorted(glob.glob(raw_source_glob, recursive=True))
     if not source_files:
         raise FileNotFoundError(f"No source files found for glob: {raw_source_glob}")
 
     pieces: list[xr.Dataset] = []
-    for canonical_var, candidate_vars in SOURCE_VAR_ALIASES.items():
-        match = None
-        matched_src_var = None
-        for src_var in candidate_vars:
-            for path in source_files:
-                stem = Path(path).name
-                if f"{src_var}_" in stem or stem.startswith(f"{src_var}.") or stem.startswith(f"{src_var}_"):
-                    match = path
-                    matched_src_var = src_var
-                    break
-            if match is not None:
-                break
-        if match is None or matched_src_var is None:
-            if canonical_var in {"t2m", "wind10"}:
-                raise ValueError(
-                    f"Could not find source file for required variable '{canonical_var}' in {raw_source_glob}"
-                )
-            # Optional channels (e.g., sp) are skipped if unavailable.
-            continue
+    for path in source_files:
+        ds = xr.open_dataset(path)
+        ds = _normalize_gfs(ds)
+        ds = _canonicalize_variables(ds, GFS_VAR_ALIASES)
 
-        ds = xr.open_dataset(match)
-        if matched_src_var not in ds.data_vars:
-            raise ValueError(f"Variable '{matched_src_var}' missing in {match}")
+        if "wind10" not in ds.data_vars and {"u10", "v10"}.issubset(ds.data_vars):
+            ds["wind10"] = np.hypot(ds["u10"], ds["v10"])
 
-        ds = ds[[matched_src_var]].rename({matched_src_var: canonical_var})
-        drop_candidates = [v for v in ["time_bnds", "rotated_pole", "height"] if v in ds.variables]
-        if drop_candidates:
-            ds = ds.drop_vars(drop_candidates)
+        keep_vars = [var for var in ["t2m", "wind10", "sp"] if var in ds.data_vars]
+        if len(keep_vars) < 2:
+            raise ValueError(f"Source file does not expose the required GFS variables: {path}")
+
+        time_value = _extract_time_value(ds, path)
+        drop_coords = [c for c in ["time", "valid_time"] if c in ds.coords and c not in ds.dims]
+        if drop_coords:
+            ds = ds.drop_vars(drop_coords)
+
+        ds = ds[keep_vars].expand_dims(time=[time_value])
+        if ds["lat"].ndim == 1 and ds["lat"].values[0] > ds["lat"].values[-1]:
+            ds = ds.sortby("lat")
+        if ds["lon"].ndim == 1 and ds["lon"].values[0] > ds["lon"].values[-1]:
+            ds = ds.sortby("lon")
         pieces.append(ds)
 
-    if not pieces:
-        raise ValueError("No usable source variables were found.")
+    source = xr.concat(pieces, dim="time").sortby("time")
+    time_index = source.get_index("time")
+    if time_index.has_duplicates:
+        source = source.isel(time=~time_index.duplicated())
 
-    source = xr.merge(pieces, compat="override")
     return source
 
 
 def _normalize_era5(ds: xr.Dataset) -> xr.Dataset:
-    rename_dims = {}
+    rename_dims: dict[str, str] = {}
     if "valid_time" in ds.dims:
         rename_dims["valid_time"] = "time"
     if "latitude" in ds.dims:
@@ -90,32 +132,26 @@ def _normalize_era5(ds: xr.Dataset) -> xr.Dataset:
 
 
 def _canonicalize_era5_variables(ds: xr.Dataset) -> xr.Dataset:
-    rename_map: dict[str, str] = {}
-    for canonical_var, candidate_vars in ERA5_VAR_ALIASES.items():
-        if canonical_var in ds.data_vars:
-            continue
-        for candidate in candidate_vars:
-            if candidate in ds.data_vars:
-                rename_map[candidate] = canonical_var
-                break
-
-    if rename_map:
-        ds = ds.rename(rename_map)
-
-    return ds
+    return _canonicalize_variables(ds, ERA5_VAR_ALIASES)
 
 
-def _regrid_cclm_to_era5_grid(
+def _regrid_source_to_era5_grid(
     source: xr.Dataset,
     target_era5: xr.Dataset,
     variables: list[str],
 ) -> xr.Dataset:
     if "lat" not in source.coords or "lon" not in source.coords:
-        raise ValueError("Source dataset must have 2D lat/lon coordinates.")
-    if "rlat" not in source.dims or "rlon" not in source.dims:
-        raise ValueError("Source dataset must expose rlat/rlon dimensions.")
+        raise ValueError("Source dataset must expose lat/lon coordinates.")
     if "lat" not in target_era5.dims or "lon" not in target_era5.dims:
         raise ValueError("ERA5 target grid must use lat/lon dimensions.")
+
+    if source["lat"].ndim == 1 and source["lon"].ndim == 1:
+        source_sorted = source.sortby("lat").sortby("lon")
+        regridded = source_sorted[variables].interp(lat=target_era5["lat"].values, lon=target_era5["lon"].values)
+        return regridded
+
+    if "rlat" not in source.dims or "rlon" not in source.dims:
+        raise ValueError("Unsupported source grid layout for interpolation.")
 
     src_lat = source["lat"].values
     src_lon = source["lon"].values
@@ -143,7 +179,7 @@ def _regrid_cclm_to_era5_grid(
     out_vars: dict[str, xr.DataArray] = {}
     for var_name in variables:
         if var_name not in source.data_vars:
-            raise ValueError(f"Source variable missing after rename: {var_name}")
+            raise ValueError(f"Source variable missing after canonicalization: {var_name}")
 
         arr = source[var_name].transpose("time", "rlat", "rlon").values
         flat = arr.reshape(n_time, -1)
@@ -162,16 +198,16 @@ def _regrid_cclm_to_era5_grid(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare CCLM/CORDEX source + ERA5 into train-ready Aures datasets.")
-    parser.add_argument("--raw-source-glob", default="data/raw/cclm/*.nc")
+    parser = argparse.ArgumentParser(description="Prepare GFS source + ERA5 into train-ready Aures datasets.")
+    parser.add_argument("--raw-source-glob", default="data/raw/gfs/**/*.nc")
     parser.add_argument("--raw-era5-glob", default="data/raw/era5/*.nc")
-    parser.add_argument("--processed-source", default="data/processed/cclm_aures_ready.nc")
+    parser.add_argument("--processed-source", default="data/processed/gfs_aures_ready.nc")
     parser.add_argument("--processed-era5", default="data/processed/era5_aures_ready.nc")
     args = parser.parse_args()
 
-    source = _open_source_merged(args.raw_source_glob)
+    source = _open_gfs_merged(args.raw_source_glob)
 
-    era5_files = sorted(glob.glob(args.raw_era5_glob))
+    era5_files = sorted(glob.glob(args.raw_era5_glob, recursive=True))
     if not era5_files:
         raise FileNotFoundError(f"No ERA5 files found for glob: {args.raw_era5_glob}")
     era5 = xr.open_mfdataset(era5_files, combine="by_coords", parallel=True)
@@ -192,7 +228,7 @@ def main() -> None:
         variables.append("sp")
 
     era5 = era5[variables]
-    source_regridded = _regrid_cclm_to_era5_grid(source, era5, variables=variables)
+    source_regridded = _regrid_source_to_era5_grid(source, era5, variables=variables)
 
     source_time = pd.DatetimeIndex(source_regridded["time"].values)
     era_time = pd.DatetimeIndex(era5["time"].values)
@@ -212,7 +248,7 @@ def main() -> None:
     era5_out.to_netcdf(processed_era5)
 
     print("Prepared datasets written:")
-    print(f"- CCLM: {processed_source} -> dims {dict(source_out.sizes)} vars {list(source_out.data_vars)}")
+    print(f"- GFS: {processed_source} -> dims {dict(source_out.sizes)} vars {list(source_out.data_vars)}")
     print(f"- ERA5: {processed_era5} -> dims {dict(era5_out.sizes)} vars {list(era5_out.data_vars)}")
     print(f"- Common timesteps: {len(common)}")
 

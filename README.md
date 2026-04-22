@@ -1,11 +1,11 @@
 # AuresNet-DZ
 
-Bias-correction / post-processing model for CCLM/CORDEX outputs over the Aures region (North-East Algeria), using ERA5 as target truth.
+Bias-correction / post-processing model for GFS outputs over the Aures region (North-East Algeria), using ERA5 as target truth.
 
 Core mapping objective:
 
 $$
-f(\text{CCLM}) \approx \text{ERA5}
+f(\text{GFS}) \approx \text{ERA5}
 $$
 
 ## Stack
@@ -63,20 +63,18 @@ pip install -e .
 
 3) Place datasets locally:
 
-- `data/raw/cclm/*.nc`
+- `data/raw/gfs/**/*.nc`
 - `data/raw/era5/*.nc`
 
-4) Prepare train-ready aligned files (CCLM/CORDEX variable mapping + Aures grid alignment):
+4) Prepare train-ready aligned files (GFS variable mapping + Aures grid alignment):
 
 ```bash
-python scripts/prepare_aures_data.py --skip-era5-sp-download
+python scripts/prepare_aures_data.py
 ```
-
-If you have valid CDS credentials in `.env` and want to include `sp` as a 4th channel, run without `--skip-era5-sp-download`.
 
 This writes:
 
-- `data/processed/cclm_aures_ready.nc`
+- `data/processed/gfs_aures_ready.nc`
 - `data/processed/era5_aures_ready.nc`
 
 5) Run a smoke test:
@@ -115,7 +113,7 @@ bash scripts/run_local_gpu.sh data.batch_size=12 data.num_workers=8
 
 ## Data conventions (current default)
 
-- Inputs: CCLM variables in netCDF (`tas`, `sfcWind`, optional pressure)
+- Inputs: GFS-derived channels in netCDF (`t2m`, `wind10`, optional `sp`)
 - Targets: ERA5 variables in netCDF
 - Canonical channels: `t2m`, `wind10` (optional `sp`)
 - Spatial alignment: IDW regridding on the Aures ERA5 grid
