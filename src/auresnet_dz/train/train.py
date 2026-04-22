@@ -14,6 +14,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from auresnet_dz.data.datamodule import DataConfig, GfsEra5DataModule
 from auresnet_dz.models.unet_smp import build_unet
 from auresnet_dz.train.lightning_module import GfsToEra5LightningModule
+from auresnet_dz.data.verification import format_readiness_summary, verify_gfs_era5_pair
 from auresnet_dz.utils import seed_everything
 
 logger = logging.getLogger(__name__)
@@ -37,15 +38,9 @@ def verify_training_data(cfg: DictConfig) -> None:
     Raises:
         RuntimeError: If data verification fails
     """
-    from auresnet_dz.data.verification import verify_gfs_era5_pair
-
     logger.info("=" * 70)
     logger.info("VERIFYING TRAINING DATA")
     logger.info("=" * 70)
-
-    if not bool(cfg.data.get("verify_data", False)):
-        logger.info("Data verification disabled in config")
-        return
 
     import glob
 
@@ -65,6 +60,12 @@ def verify_training_data(cfg: DictConfig) -> None:
 
     required_vars = list(set(cfg.data.input_variables + cfg.data.target_variables))
     report = verify_gfs_era5_pair(gfs_file, era5_file, required_variables=required_vars)
+
+    logger.info("\n" + format_readiness_summary(report))
+
+    if not bool(cfg.data.get("verify_data", False)):
+        logger.info("Strict verification is disabled; continuing with training if the processed files are usable.")
+        return
 
     if not report.is_valid:
         logger.error("\n" + "=" * 70)

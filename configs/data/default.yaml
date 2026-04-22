@@ -3,11 +3,17 @@ raw_era5_glob: data/processed/era5_aures_ready.nc
 
 input_variables:
   - t2m
-  - wind10
+  - u10
+  - v10
+  - sp
+  - tp
 
 target_variables:
   - t2m
-  - wind10
+  - u10
+  - v10
+  - sp
+  - tp
 
 time_dim: time
 lat_dim: lat

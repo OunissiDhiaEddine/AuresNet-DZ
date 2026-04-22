@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 
 GFS_TO_ERA5_VAR_MAP: dict[str, str] = {
     "t2m": "t2m",
-    "u10": "wind10",
-    "v10": "wind10",
+    "u10": "u10",
+    "v10": "v10",
     "sp": "sp",
+    "tp": "tp",
     "wind10": "wind10",
+    "d2m": "d2m",
 }
 
 
@@ -30,6 +32,40 @@ class DataQualityReport:
     gfs_info: dict
     era5_info: dict
     alignment_info: dict
+
+
+def format_readiness_summary(report: DataQualityReport) -> str:
+    """Create a concise human-readable readiness summary."""
+    lines: list[str] = []
+    lines.append("DATA READINESS SUMMARY")
+    lines.append(f"  Valid: {'yes' if report.is_valid else 'no'}")
+
+    gfs_shape = report.gfs_info.get("shape", {})
+    era5_shape = report.era5_info.get("shape", {})
+    lines.append(f"  GFS: {report.gfs_info.get('path', 'N/A')} | shape={gfs_shape} | vars={report.gfs_info.get('variables', [])}")
+    lines.append(f"  ERA5: {report.era5_info.get('path', 'N/A')} | shape={era5_shape} | vars={report.era5_info.get('variables', [])}")
+
+    common_times = report.alignment_info.get("common_times")
+    time_range = report.alignment_info.get("time_range")
+    common_vars = report.alignment_info.get("common_variables", [])
+    gfs_only = report.alignment_info.get("gfs_only_variables", [])
+    era5_only = report.alignment_info.get("era5_only_variables", [])
+    if common_times is not None:
+        lines.append(f"  Common times: {common_times}")
+    if time_range is not None:
+        lines.append(f"  Common time range: {time_range[0]} -> {time_range[1]}")
+    lines.append(f"  Common variables: {common_vars}")
+    if gfs_only:
+        lines.append(f"  GFS-only variables: {gfs_only}")
+    if era5_only:
+        lines.append(f"  ERA5-only variables: {era5_only}")
+
+    if report.warnings:
+        lines.append(f"  Warnings: {len(report.warnings)}")
+    if report.errors:
+        lines.append(f"  Errors: {len(report.errors)}")
+
+    return "\n".join(lines)
 
 
 def check_dataset_integrity(ds: xr.Dataset, dataset_type: str = "dataset") -> tuple[bool, list[str]]:
@@ -346,6 +382,8 @@ def verify_gfs_era5_pair(
     if not vars_ok:
         errors.extend(var_errs)
     alignment_info["common_variables"] = common_vars
+    alignment_info["gfs_only_variables"] = sorted({str(v) for v in set(gfs_ds.data_vars) - set(common_vars)})
+    alignment_info["era5_only_variables"] = sorted({str(v) for v in set(era5_ds.data_vars) - set(common_vars)})
 
     overall_valid = len(errors) == 0
 
@@ -403,5 +441,6 @@ def _log_report(report: DataQualityReport) -> None:
         logger.error("\n✗ Data verification FAILED")
 
     logger.info("=" * 70)
+
 
 

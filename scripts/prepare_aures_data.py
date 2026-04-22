@@ -16,6 +16,7 @@ GFS_VAR_ALIASES: dict[str, tuple[str, ...]] = {
     "u10": ("u10", "10u"),
     "v10": ("v10", "10v"),
     "sp": ("sp", "surface_pressure"),
+    "tp": ("tp", "total_precipitation"),
 }
 
 ERA5_VAR_ALIASES: dict[str, tuple[str, ...]] = {
@@ -23,6 +24,8 @@ ERA5_VAR_ALIASES: dict[str, tuple[str, ...]] = {
     "u10": ("u10", "10u"),
     "v10": ("v10", "10v"),
     "sp": ("sp", "surface_pressure"),
+    "tp": ("tp", "total_precipitation"),
+    "d2m": ("d2m", "2d"),
 }
 
 
@@ -86,8 +89,8 @@ def _open_gfs_merged(raw_source_glob: str) -> xr.Dataset:
         if "wind10" not in ds.data_vars and {"u10", "v10"}.issubset(ds.data_vars):
             ds["wind10"] = np.hypot(ds["u10"], ds["v10"])
 
-        keep_vars = [var for var in ["t2m", "wind10", "sp"] if var in ds.data_vars]
-        if len(keep_vars) < 2:
+        keep_vars = [var for var in ["t2m", "u10", "v10", "sp", "tp", "wind10"] if var in ds.data_vars]
+        if len([var for var in keep_vars if var in {"t2m", "u10", "v10", "sp", "tp"}]) < 3:
             raise ValueError(f"Source file does not expose the required GFS variables: {path}")
 
         time_value = _extract_time_value(ds, path)
@@ -214,18 +217,16 @@ def main() -> None:
     era5 = _normalize_era5(era5)
     era5 = _canonicalize_era5_variables(era5)
 
-    required_era5 = ["t2m", "wind10"]
+    required_era5 = ["t2m", "u10", "v10", "sp", "tp"]
     for var in required_era5:
         if var not in era5.data_vars:
             raise ValueError(f"ERA5 variable missing: {var}")
 
     source_has_sp = "sp" in source.data_vars
-    variables = ["t2m", "wind10"]
+    variables = ["t2m", "u10", "v10", "sp", "tp"]
+
     if source_has_sp and "sp" not in era5.data_vars:
         raise ValueError("Source includes 'sp' but ERA5 'sp' is missing. Include 'sp' in ERA5 input files.")
-
-    if source_has_sp:
-        variables.append("sp")
 
     era5 = era5[variables]
     source_regridded = _regrid_source_to_era5_grid(source, era5, variables=variables)
