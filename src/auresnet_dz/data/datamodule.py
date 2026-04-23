@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import xarray as xr
@@ -43,6 +44,56 @@ class DataConfig:
     """If True, verify data compatibility before training."""
 
 
+@dataclass
+class ChannelNormalizationStats:
+    variable_names: list[str]
+    mean: torch.Tensor
+    std: torch.Tensor
+
+    @classmethod
+    def from_dataset(
+        cls,
+        ds: xr.Dataset,
+        variable_names: list[str],
+        time_dim: str,
+        time_indices: list[int] | None = None,
+    ) -> "ChannelNormalizationStats":
+        if time_indices is not None:
+            ds = ds.isel({time_dim: time_indices})
+
+        means: list[float] = []
+        stds: list[float] = []
+        for variable_name in variable_names:
+            values = np.asarray(ds[variable_name].astype("float64").values)
+            mean = float(np.nanmean(values))
+            std = float(np.nanstd(values))
+            if not np.isfinite(std) or std < 1e-6:
+                std = 1.0
+            means.append(mean)
+            stds.append(std)
+
+        return cls(
+            variable_names=list(variable_names),
+            mean=torch.tensor(means, dtype=torch.float32),
+            std=torch.tensor(stds, dtype=torch.float32),
+        )
+
+    def _channel_view(self, tensor: torch.Tensor, channel_dim: int) -> tuple[torch.Tensor, torch.Tensor]:
+        shape = [1] * tensor.ndim
+        shape[channel_dim] = -1
+        mean = self.mean.to(device=tensor.device, dtype=tensor.dtype).view(*shape)
+        std = self.std.to(device=tensor.device, dtype=tensor.dtype).view(*shape)
+        return mean, std
+
+    def normalize(self, tensor: torch.Tensor, channel_dim: int) -> torch.Tensor:
+        mean, std = self._channel_view(tensor, channel_dim)
+        return (tensor - mean) / std
+
+    def denormalize(self, tensor: torch.Tensor, channel_dim: int) -> torch.Tensor:
+        mean, std = self._channel_view(tensor, channel_dim)
+        return tensor * std + mean
+
+
 class LazyGfsEra5Dataset(Dataset):
     """Loads one timestamp sample at a time to avoid full in-memory materialization."""
 
@@ -53,13 +104,25 @@ class LazyGfsEra5Dataset(Dataset):
         input_variables: list[str],
         target_variables: list[str],
         time_dim: str,
+        input_normalization: ChannelNormalizationStats | None = None,
+        target_normalization: ChannelNormalizationStats | None = None,
     ) -> None:
         self.gfs = gfs
         self.era5 = era5
         self.input_variables = input_variables
         self.target_variables = target_variables
         self.time_dim = time_dim
+        self.input_normalization = input_normalization
+        self.target_normalization = target_normalization
         self.n_samples = int(gfs.sizes[time_dim])
+
+    def set_normalization(
+        self,
+        input_normalization: ChannelNormalizationStats | None,
+        target_normalization: ChannelNormalizationStats | None,
+    ) -> None:
+        self.input_normalization = input_normalization
+        self.target_normalization = target_normalization
 
     def __len__(self) -> int:
         return self.n_samples
@@ -73,6 +136,12 @@ class LazyGfsEra5Dataset(Dataset):
 
         x = torch.tensor(x_np, dtype=torch.float32)
         y = torch.tensor(y_np, dtype=torch.float32)
+
+        if self.input_normalization is not None:
+            x = self.input_normalization.normalize(x, channel_dim=0)
+        if self.target_normalization is not None:
+            y = self.target_normalization.normalize(y, channel_dim=0)
+
         return x, y
 
 
@@ -83,8 +152,14 @@ class GfsEra5DataModule(pl.LightningDataModule):
         self.train_ds: Dataset | None = None
         self.val_ds: Dataset | None = None
         self.test_ds: Dataset | None = None
+        self.input_normalization: ChannelNormalizationStats | None = None
+        self.target_normalization: ChannelNormalizationStats | None = None
+        self._is_setup = False
 
     def setup(self, stage: str | None = None) -> None:
+        if self._is_setup:
+            return
+
         if self.cfg.verify_data:
             logger.info("Running data verification...")
             self._verify_raw_data()
@@ -121,9 +196,25 @@ class GfsEra5DataModule(pl.LightningDataModule):
         val_idx = indices[n_train : n_train + n_val]
         test_idx = indices[n_train + n_val :]
 
+        self.input_normalization = ChannelNormalizationStats.from_dataset(
+            gfs,
+            self.cfg.input_variables,
+            time_dim=self.cfg.time_dim,
+            time_indices=train_idx,
+        )
+        self.target_normalization = ChannelNormalizationStats.from_dataset(
+            era5,
+            self.cfg.target_variables,
+            time_dim=self.cfg.time_dim,
+            time_indices=train_idx,
+        )
+
+        full_ds.set_normalization(self.input_normalization, self.target_normalization)
+
         self.train_ds = Subset(full_ds, train_idx)
         self.val_ds = Subset(full_ds, val_idx)
         self.test_ds = Subset(full_ds, test_idx)
+        self._is_setup = True
 
     def _loader_kwargs(self) -> dict:
         kwargs = {

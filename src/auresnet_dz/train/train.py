@@ -109,6 +109,7 @@ def main(cfg: DictConfig) -> None:
     data_cfg_dict = cast(dict[str, Any], OmegaConf.to_container(cfg.data, resolve=True))
     data_cfg = DataConfig(**data_cfg_dict)
     datamodule = GfsEra5DataModule(cfg=data_cfg)
+    datamodule.setup()
 
     expected_in_channels = len(data_cfg.input_variables)
     expected_out_channels = len(data_cfg.target_variables)
@@ -130,6 +131,9 @@ def main(cfg: DictConfig) -> None:
         model=net,
         learning_rate=float(cfg.train.learning_rate),
         weight_decay=float(cfg.train.weight_decay),
+        target_variable_names=data_cfg.target_variables,
+        target_mean=datamodule.target_normalization.mean if datamodule.target_normalization is not None else None,
+        target_std=datamodule.target_normalization.std if datamodule.target_normalization is not None else None,
     )
 
     ckpt = ModelCheckpoint(

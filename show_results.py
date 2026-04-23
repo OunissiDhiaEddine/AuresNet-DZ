@@ -53,7 +53,11 @@ def _load_hparams(logs_dir: Path) -> dict[str, Any]:
     if not hparams_path.exists():
         return {}
     with hparams_path.open("r", encoding="utf-8") as f:
-        loaded = yaml.safe_load(f) or {}
+        try:
+            loaded = yaml.safe_load(f) or {}
+        except yaml.constructor.ConstructorError:
+            f.seek(0)
+            loaded = yaml.unsafe_load(f) or {}
     if isinstance(loaded, dict):
         return loaded
     return {}
@@ -96,6 +100,19 @@ def _series_values(metrics: dict[str, list[tuple[int, float]]], tag: str) -> tup
     steps = [s for s, _ in points]
     values = [v for _, v in points]
     return steps, values
+
+
+def _print_metric_group(metrics: dict[str, list[tuple[int, float]]], prefix: str, title: str) -> None:
+    tags = sorted(tag for tag in metrics if tag.startswith(prefix))
+    if not tags:
+        return
+
+    print(f"\n{title}:")
+    for tag in tags:
+        _, values = _series_values(metrics, tag)
+        if values:
+            suffix = tag.split("/", 1)[1] if "/" in tag else tag
+            print(f"   {suffix}: {_format_float(values[-1])}")
 
 
 def _extract_checkpoint_summary(checkpoint_dir: Path) -> tuple[list[Path], dict[str, Any]]:
@@ -222,6 +239,8 @@ def main() -> None:
         print(f"   Initial: {_format_float(train_mae[0])}")
         print(f"   Final:   {_format_float(train_mae[-1])}")
 
+    _print_metric_group(metrics, "train_mae/", "TRAIN MAE BY VARIABLE")
+
     test_tags = sorted([tag for tag in metrics if tag.startswith("test_")])
     print("\nTEST METRICS:")
     if not test_tags:
@@ -231,6 +250,9 @@ def main() -> None:
             _, values = _series_values(metrics, tag)
             if values:
                 print(f"   {tag}: {_format_float(values[-1])}")
+
+    _print_metric_group(metrics, "val_mae/", "VALIDATION MAE BY VARIABLE")
+    _print_metric_group(metrics, "test_mae/", "TEST MAE BY VARIABLE")
 
     if train_mae and val_mae:
         gap = val_mae[-1] - train_mae[-1]

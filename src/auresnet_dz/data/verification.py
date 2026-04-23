@@ -428,17 +428,17 @@ def _log_report(report: DataQualityReport) -> None:
     if report.errors:
         logger.error("\nERRORS:")
         for err in report.errors:
-            logger.error(f"  ✗ {err}")
+            logger.error(f"  [X] {err}")
 
     if report.warnings:
         logger.warning("\nWARNINGS:")
         for warn in report.warnings:
-            logger.warning(f"  ⚠ {warn}")
+            logger.warning(f"  [!] {warn}")
 
     if report.is_valid:
-        logger.info("\n✓ Data verification PASSED")
+        logger.info("\n[OK] Data verification PASSED")
     else:
-        logger.error("\n✗ Data verification FAILED")
+        logger.error("\n[X] Data verification FAILED")
 
     logger.info("=" * 70)
 

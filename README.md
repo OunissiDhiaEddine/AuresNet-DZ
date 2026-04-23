@@ -86,13 +86,15 @@ bash scripts/run_local_gpu.sh train.max_epochs=1 data.batch_size=1
 6) Run full local training:
 
 ```bash
-bash scripts/run_local_gpu.sh train.max_epochs=120 data.batch_size=8
+bash scripts/run_local_gpu.sh train.max_epochs=120 train.precision=32-true data.batch_size=8
 ```
 
 ### Performance notes (RTX)
 
 - Default training profile is `train: local_gpu` in [configs/config.yaml](configs/config.yaml).
-- It enables mixed precision and local GPU optimizations (TF32 + cuDNN benchmark).
+- Training now normalizes each variable using train-split statistics, then reports MAE per variable in original units.
+- It uses `train.precision=32-true` to avoid FP16 overflow on large-magnitude channels like `sp`.
+- Local GPU optimizations (TF32 + cuDNN benchmark) remain enabled.
 - If your GPU memory is tight, reduce batch size:
 
 ```bash
