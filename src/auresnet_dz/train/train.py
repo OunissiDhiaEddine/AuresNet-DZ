@@ -4,6 +4,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
+# Silence known non-actionable warning on systems without Triton.
+logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
+
 import hydra
 import pytorch_lightning as pl
 import torch

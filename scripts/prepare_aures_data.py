@@ -138,6 +138,52 @@ def _canonicalize_era5_variables(ds: xr.Dataset) -> xr.Dataset:
     return _canonicalize_variables(ds, ERA5_VAR_ALIASES)
 
 
+def _harmonize_tp_to_meters(ds: xr.Dataset, dataset_name: str) -> xr.Dataset:
+    if "tp" not in ds.data_vars:
+        return ds
+
+    tp = ds["tp"]
+    units = str(tp.attrs.get("units", "")).strip().lower()
+    factor = 1.0
+    reason = "already in meters"
+
+    if any(token in units for token in ("mm", "millimeter", "kg m-2", "kg/m^2", "kg m^-2", "kg m**-2")):
+        factor = 1.0e-3
+        reason = f"units='{units}' interpreted as mm-equivalent"
+    elif units in {"m", "meter", "meters", "metre", "metres"}:
+        factor = 1.0
+        reason = f"units='{units}' interpreted as meters"
+    else:
+        # Fallback heuristic for missing/ambiguous units:
+        # values above 1 are very unlikely for hourly precipitation in meters.
+        n_time = int(tp.sizes.get("time", 0))
+        sample = tp if n_time <= 48 else tp.isel(time=slice(0, 48))
+        sample_vals = np.asarray(sample.values, dtype=np.float64)
+        finite = sample_vals[np.isfinite(sample_vals)]
+        if finite.size > 0:
+            p99 = float(np.quantile(np.abs(finite), 0.99))
+            if p99 > 1.0:
+                factor = 1.0e-3
+                reason = f"p99={p99:.4g} suggests mm-scale values"
+            else:
+                reason = f"p99={p99:.4g} suggests meter-scale values"
+        else:
+            reason = "no finite values; left unchanged"
+
+    if factor != 1.0:
+        ds["tp"] = tp * factor
+        ds["tp"].attrs.update(tp.attrs)
+        ds["tp"].attrs["original_units"] = tp.attrs.get("units", "")
+        ds["tp"].attrs["units"] = "m"
+        print(f"[{dataset_name}] Converted tp to meters with factor={factor:g} ({reason})")
+    else:
+        if "units" not in ds["tp"].attrs:
+            ds["tp"].attrs["units"] = "m"
+        print(f"[{dataset_name}] tp kept as-is ({reason})")
+
+    return ds
+
+
 def _regrid_source_to_era5_grid(
     source: xr.Dataset,
     target_era5: xr.Dataset,
@@ -209,6 +255,7 @@ def main() -> None:
     args = parser.parse_args()
 
     source = _open_gfs_merged(args.raw_source_glob)
+    source = _harmonize_tp_to_meters(source, dataset_name="GFS")
 
     era5_files = sorted(glob.glob(args.raw_era5_glob, recursive=True))
     if not era5_files:
@@ -216,6 +263,7 @@ def main() -> None:
     era5 = xr.open_mfdataset(era5_files, combine="by_coords", parallel=True)
     era5 = _normalize_era5(era5)
     era5 = _canonicalize_era5_variables(era5)
+    era5 = _harmonize_tp_to_meters(era5, dataset_name="ERA5")
 
     required_era5 = ["t2m", "u10", "v10", "sp", "tp"]
     for var in required_era5:

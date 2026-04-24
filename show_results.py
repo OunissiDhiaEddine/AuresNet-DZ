@@ -8,6 +8,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import torch
+import xarray as xr
 import yaml
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
@@ -90,6 +93,9 @@ def _load_scalars(logs_dir: Path) -> dict[str, list[tuple[int, float]]]:
 def _format_float(value: float | None, ndigits: int = 4) -> str:
     if value is None:
         return "N/A"
+    abs_value = abs(value)
+    if abs_value != 0.0 and (abs_value < 10 ** (-(ndigits - 1)) or abs_value >= 10**4):
+        return f"{value:.3e}"
     return f"{value:.{ndigits}f}"
 
 
@@ -145,6 +151,43 @@ def _extract_checkpoint_summary(checkpoint_dir: Path) -> tuple[list[Path], dict[
     except Exception:
         pass
     return checkpoints, summary
+
+
+def _safe_read_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f) or {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _compute_test_indices(n_samples: int, train_split: float, val_split: float, split_seed: int) -> list[int]:
+    n_train = int(n_samples * train_split)
+    n_val = int(n_samples * val_split)
+    g = torch.Generator().manual_seed(split_seed)
+    indices = torch.randperm(n_samples, generator=g).tolist()
+    return indices[n_train + n_val :]
+
+
+def _baseline_mae_by_variable(
+    gfs_path: Path,
+    era5_path: Path,
+    variables: list[str],
+    test_indices: list[int],
+) -> dict[str, float]:
+    gfs = xr.open_dataset(gfs_path)
+    era5 = xr.open_dataset(era5_path)
+    baseline: dict[str, float] = {}
+    for variable_name in variables:
+        if variable_name not in gfs.data_vars or variable_name not in era5.data_vars:
+            continue
+        a = gfs[variable_name].isel(time=test_indices).values
+        b = era5[variable_name].isel(time=test_indices).values
+        mask = np.isfinite(a) & np.isfinite(b)
+        if not np.any(mask):
+            continue
+        baseline[variable_name] = float(np.abs(a[mask] - b[mask]).mean())
+    return baseline
 
 
 def main() -> None:
@@ -253,6 +296,43 @@ def main() -> None:
 
     _print_metric_group(metrics, "val_mae/", "VALIDATION MAE BY VARIABLE")
     _print_metric_group(metrics, "test_mae/", "TEST MAE BY VARIABLE")
+
+    data_cfg = _safe_read_yaml(Path("configs/data/default.yaml"))
+    gfs_path = Path(str(data_cfg.get("raw_gfs_glob", "data/processed/gfs_aures_ready.nc")))
+    era5_path = Path(str(data_cfg.get("raw_era5_glob", "data/processed/era5_aures_ready.nc")))
+    train_split = float(data_cfg.get("train_split", 0.8))
+    val_split = float(data_cfg.get("val_split", 0.1))
+    split_seed = int(data_cfg.get("split_seed", 42))
+
+    test_mae_tags = sorted(tag for tag in metrics if tag.startswith("test_mae/"))
+    test_variables = [tag.split("/", 1)[1] for tag in test_mae_tags if "/" in tag]
+
+    if gfs_path.exists() and era5_path.exists() and test_variables:
+        try:
+            gfs_ds = xr.open_dataset(gfs_path)
+            n_samples = int(gfs_ds.sizes.get("time", 0))
+            if n_samples > 0:
+                test_indices = _compute_test_indices(n_samples, train_split, val_split, split_seed)
+                baseline = _baseline_mae_by_variable(gfs_path, era5_path, test_variables, test_indices)
+                if baseline:
+                    print("\nBASELINE SKILL VS RAW GFS (TEST SPLIT):")
+                    for variable_name in test_variables:
+                        model_points = metrics.get(f"test_mae/{variable_name}", [])
+                        if not model_points or variable_name not in baseline:
+                            continue
+                        model_mae = model_points[-1][1]
+                        raw_mae = baseline[variable_name]
+                        if raw_mae == 0:
+                            skill_pct = None
+                        else:
+                            skill_pct = 100.0 * (raw_mae - model_mae) / raw_mae
+                        print(
+                            f"   {variable_name}: model={_format_float(model_mae)} | "
+                            f"raw_gfs={_format_float(raw_mae)} | "
+                            f"improvement={_format_float(skill_pct, ndigits=2)}%"
+                        )
+        except Exception:
+            pass
 
     if train_mae and val_mae:
         gap = val_mae[-1] - train_mae[-1]
