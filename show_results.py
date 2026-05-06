@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--logs-root", default="logs", help="Root directory containing TensorBoard logs.")
     parser.add_argument("--experiment", default="", help="Optional experiment name under logs root.")
     parser.add_argument("--checkpoints", default="checkpoints", help="Checkpoint directory.")
+    parser.add_argument("--output-md", default="results.md", help="Output markdown file path.")
     return parser.parse_args()
 
 
@@ -108,17 +110,18 @@ def _series_values(metrics: dict[str, list[tuple[int, float]]], tag: str) -> tup
     return steps, values
 
 
-def _print_metric_group(metrics: dict[str, list[tuple[int, float]]], prefix: str, title: str) -> None:
+def _format_metric_group(metrics: dict[str, list[tuple[int, float]]], prefix: str, title: str) -> str:
     tags = sorted(tag for tag in metrics if tag.startswith(prefix))
     if not tags:
-        return
+        return ""
 
-    print(f"\n{title}:")
+    lines = [f"\n## {title}"]
     for tag in tags:
         _, values = _series_values(metrics, tag)
         if values:
             suffix = tag.split("/", 1)[1] if "/" in tag else tag
-            print(f"   {suffix}: {_format_float(values[-1])}")
+            lines.append(f"- **{suffix}**: {_format_float(values[-1])}")
+    return "\n".join(lines)
 
 
 def _extract_checkpoint_summary(checkpoint_dir: Path) -> tuple[list[Path], dict[str, Any]]:
@@ -194,25 +197,32 @@ def main() -> None:
     args = _parse_args()
     logs_root = Path(args.logs_root)
     checkpoint_dir = Path(args.checkpoints)
+    output_file = Path(args.output_md)
 
     logs_dir = _find_latest_logs_dir(logs_root, args.experiment)
+    
+    lines: list[str] = []
 
-    print("\n" + "=" * 80)
-    print(" " * 20 + "AURESNET-DZ TRAINING RESULTS")
-    print("=" * 80)
+    lines.append("# AURESNET-DZ TRAINING RESULTS")
+    lines.append(f"\n*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
 
     if logs_dir is None:
-        print("\nNo training logs found.")
-        print(f"Checked logs root: {logs_root.resolve()}")
-        print("Run training first, then rerun this script.")
-        print("=" * 80 + "\n")
+        lines.append("## Status")
+        lines.append("No training logs found.")
+        lines.append(f"\nChecked logs root: `{logs_root.resolve()}`")
+        lines.append("\nRun training first, then rerun this script.")
+        
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text("\n".join(lines), encoding="utf-8")
+        print(f"Results saved to: {output_file.resolve()}\n")
         return
 
-    print(f"\nRun directory: {logs_dir}")
+    lines.append(f"## Run Information")
+    lines.append(f"**Run directory**: `{logs_dir}`\n")
 
     hparams = _load_hparams(logs_dir)
     if hparams:
-        print("\nHYPERPARAMETERS:")
+        lines.append("## Hyperparameters")
         for key in [
             "learning_rate",
             "weight_decay",
@@ -222,27 +232,33 @@ def main() -> None:
             "accumulate_grad_batches",
         ]:
             if key in hparams:
-                print(f"   {key}: {hparams[key]}")
+                lines.append(f"- **{key}**: {hparams[key]}")
+        lines.append("")
 
     checkpoints, ckpt_summary = _extract_checkpoint_summary(checkpoint_dir)
-    print("\nSAVED CHECKPOINTS:")
+    lines.append("## Saved Checkpoints")
     if not checkpoints:
-        print("   None found.")
+        lines.append("None found.")
     else:
         for ckpt in checkpoints[:5]:
             size_mb = ckpt.stat().st_size / (1024 * 1024)
-            print(f"   {ckpt.name} ({size_mb:.1f} MB)")
+            lines.append(f"- `{ckpt.name}` ({size_mb:.1f} MB)")
         if len(checkpoints) > 5:
-            print(f"   ... and {len(checkpoints) - 5} more")
+            lines.append(f"- ... and {len(checkpoints) - 5} more")
+    lines.append("")
 
     metrics = _load_scalars(logs_dir)
     if not metrics:
-        print("\nNo TensorBoard scalar metrics found in this run.")
-        print("=" * 80 + "\n")
+        lines.append("## Metrics")
+        lines.append("No TensorBoard scalar metrics found in this run.")
+        
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text("\n".join(lines), encoding="utf-8")
+        print(f"Results saved to: {output_file.resolve()}\n")
         return
 
-    print("\nMETRICS OVERVIEW:")
-    print(f"   Scalar tags found: {len(metrics)}")
+    lines.append("## Metrics Overview")
+    lines.append(f"**Scalar tags found**: {len(metrics)}\n")
 
     train_steps, train_loss_step = _series_values(metrics, "train_loss_step")
     _, train_loss_epoch = _series_values(metrics, "train_loss_epoch")
@@ -253,49 +269,64 @@ def main() -> None:
         initial = train_loss_step[0]
         final = train_loss_step[-1]
         change_pct = ((final - initial) / initial * 100.0) if initial != 0 else 0.0
-        print("\nTRAIN LOSS (STEP):")
-        print(f"   Initial: {_format_float(initial)}")
-        print(f"   Final:   {_format_float(final)}")
-        print(f"   Change:  {change_pct:.2f}%")
-        print(f"   Steps:   {len(train_steps)}")
+        lines.append("## Train Loss (Step)")
+        lines.append(f"- **Initial**: {_format_float(initial)}")
+        lines.append(f"- **Final**: {_format_float(final)}")
+        lines.append(f"- **Change**: {change_pct:.2f}%")
+        lines.append(f"- **Steps**: {len(train_steps)}")
+        lines.append("")
 
     if train_loss_epoch:
-        print("\nTRAIN LOSS (EPOCH):")
-        print(f"   Epochs logged: {len(train_loss_epoch)}")
-        print(f"   Initial:       {_format_float(train_loss_epoch[0])}")
-        print(f"   Final:         {_format_float(train_loss_epoch[-1])}")
+        lines.append("## Train Loss (Epoch)")
+        lines.append(f"- **Epochs logged**: {len(train_loss_epoch)}")
+        lines.append(f"- **Initial**: {_format_float(train_loss_epoch[0])}")
+        lines.append(f"- **Final**: {_format_float(train_loss_epoch[-1])}")
+        lines.append("")
 
     if val_mae:
         best_val = min(val_mae)
         best_idx = val_mae.index(best_val)
         best_step = val_steps[best_idx]
-        print("\nVALIDATION MAE:")
-        print(f"   Initial: {_format_float(val_mae[0])}")
-        print(f"   Best:    {_format_float(best_val)} (step {best_step})")
-        print(f"   Final:   {_format_float(val_mae[-1])}")
+        lines.append("## Validation MAE")
+        lines.append(f"- **Initial**: {_format_float(val_mae[0])}")
+        lines.append(f"- **Best**: {_format_float(best_val)} (step {best_step})")
+        lines.append(f"- **Final**: {_format_float(val_mae[-1])}")
         if val_mae[0] != 0:
             improvement_pct = (val_mae[0] - best_val) / val_mae[0] * 100.0
-            print(f"   Improvement to best: {improvement_pct:.2f}%")
+            lines.append(f"- **Improvement to best**: {improvement_pct:.2f}%")
+        lines.append("")
 
     if train_mae:
-        print("\nTRAIN MAE:")
-        print(f"   Initial: {_format_float(train_mae[0])}")
-        print(f"   Final:   {_format_float(train_mae[-1])}")
+        lines.append("## Train MAE")
+        lines.append(f"- **Initial**: {_format_float(train_mae[0])}")
+        lines.append(f"- **Final**: {_format_float(train_mae[-1])}")
+        lines.append("")
 
-    _print_metric_group(metrics, "train_mae/", "TRAIN MAE BY VARIABLE")
+    metric_group = _format_metric_group(metrics, "train_mae/", "Train MAE by Variable")
+    if metric_group:
+        lines.append(metric_group)
+        lines.append("")
 
     test_tags = sorted([tag for tag in metrics if tag.startswith("test_")])
-    print("\nTEST METRICS:")
+    lines.append("## Test Metrics")
     if not test_tags:
-        print("   No test_* metrics were found in TensorBoard logs.")
+        lines.append("No test_* metrics were found in TensorBoard logs.")
     else:
         for tag in test_tags:
             _, values = _series_values(metrics, tag)
             if values:
-                print(f"   {tag}: {_format_float(values[-1])}")
+                lines.append(f"- **{tag}**: {_format_float(values[-1])}")
+    lines.append("")
 
-    _print_metric_group(metrics, "val_mae/", "VALIDATION MAE BY VARIABLE")
-    _print_metric_group(metrics, "test_mae/", "TEST MAE BY VARIABLE")
+    metric_group = _format_metric_group(metrics, "val_mae/", "Validation MAE by Variable")
+    if metric_group:
+        lines.append(metric_group)
+        lines.append("")
+
+    metric_group = _format_metric_group(metrics, "test_mae/", "Test MAE by Variable")
+    if metric_group:
+        lines.append(metric_group)
+        lines.append("")
 
     data_cfg = _safe_read_yaml(Path("configs/data/default.yaml"))
     gfs_path = Path(str(data_cfg.get("raw_gfs_glob", "data/processed/gfs_aures_ready.nc")))
@@ -315,7 +346,7 @@ def main() -> None:
                 test_indices = _compute_test_indices(n_samples, train_split, val_split, split_seed)
                 baseline = _baseline_mae_by_variable(gfs_path, era5_path, test_variables, test_indices)
                 if baseline:
-                    print("\nBASELINE SKILL VS RAW GFS (TEST SPLIT):")
+                    lines.append("## Baseline Skill vs Raw GFS (Test Split)")
                     for variable_name in test_variables:
                         model_points = metrics.get(f"test_mae/{variable_name}", [])
                         if not model_points or variable_name not in baseline:
@@ -326,33 +357,49 @@ def main() -> None:
                             skill_pct = None
                         else:
                             skill_pct = 100.0 * (raw_mae - model_mae) / raw_mae
-                        print(
-                            f"   {variable_name}: model={_format_float(model_mae)} | "
+                        lines.append(
+                            f"- **{variable_name}**: model={_format_float(model_mae)} | "
                             f"raw_gfs={_format_float(raw_mae)} | "
                             f"improvement={_format_float(skill_pct, ndigits=2)}%"
                         )
+                    lines.append("")
         except Exception:
             pass
 
     if train_mae and val_mae:
         gap = val_mae[-1] - train_mae[-1]
-        print("\nGENERALIZATION SNAPSHOT:")
-        print(f"   Final train_mae: {_format_float(train_mae[-1])}")
-        print(f"   Final val_mae:   {_format_float(val_mae[-1])}")
-        print(f"   Gap (val-train): {_format_float(gap)}")
+        lines.append("## Generalization Snapshot")
+        lines.append(f"- **Final train_mae**: {_format_float(train_mae[-1])}")
+        lines.append(f"- **Final val_mae**: {_format_float(val_mae[-1])}")
+        lines.append(f"- **Gap (val-train)**: {_format_float(gap)}")
+        lines.append("")
 
     if ckpt_summary:
-        print("\nLATEST CHECKPOINT SUMMARY:")
+        lines.append("## Latest Checkpoint Summary")
         if "epoch" in ckpt_summary:
-            print(f"   Epoch:       {ckpt_summary['epoch']}")
+            lines.append(f"- **Epoch**: {ckpt_summary['epoch']}")
         if "global_step" in ckpt_summary:
-            print(f"   Global step: {ckpt_summary['global_step']}")
+            lines.append(f"- **Global step**: {ckpt_summary['global_step']}")
         if "val_mae" in ckpt_summary:
-            print(f"   val_mae:     {_format_float(float(ckpt_summary['val_mae']))}")
+            lines.append(f"- **val_mae**: {_format_float(float(ckpt_summary['val_mae']))}")
+        lines.append("")
 
-    print("\nAvailable scalar tags:")
-    print("   " + ", ".join(sorted(metrics.keys())))
-    print("\n" + "=" * 80 + "\n")
+    lines.append("## Available Scalar Tags")
+    lines.append("```")
+    lines.append(", ".join(sorted(metrics.keys())))
+    lines.append("```")
+
+    # Ensure output directory exists and write the file
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text("\n".join(lines), encoding="utf-8")
+    
+    # Print to console for immediate feedback
+    print("\n" + "=" * 80)
+    print(" " * 20 + "AURESNET-DZ TRAINING RESULTS")
+    print("=" * 80)
+    print("\n".join(lines))
+    print("\n" + "=" * 80)
+    print(f"✓ Results saved to: {output_file.resolve()}\n")
 
 
 if __name__ == "__main__":
