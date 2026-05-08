@@ -1,6 +1,6 @@
-architecture: unet
-encoder_name: resnet34
+architecture: unetplusplus
+encoder_name: resnet50
 encoder_weights: null
 
-in_channels: 2
-out_channels: 2
+in_channels: 5
+out_channels: 5

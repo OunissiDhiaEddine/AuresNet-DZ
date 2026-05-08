@@ -27,7 +27,25 @@ class GfsToEra5LightningModule(pl.LightningModule):
         self.save_hyperparameters(ignore=["model"])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)
+        # Padded to (32, 32) because segmentation-models-pytorch (SMP) expects
+        # dimensions divisible by 32 (standard for ResNet encoders).
+        h, w = x.shape[-2:]
+        pad_h = (32 - h % 32) % 32
+        pad_w = (32 - w % 32) % 32
+        
+        if pad_h > 0 or pad_w > 0:
+            # Pad is (left, right, top, bottom)
+            # Use 'constant' with 0 instead of 'reflect' because reflect requires
+            # the padding size to be smaller than the original dimension.
+            # (e.g. padding 25 rows onto a 7-row image is only possible with constant)
+            x = F.pad(x, (0, pad_w, 0, pad_h), mode="constant", value=0)
+            
+        out = self.model(x)
+        
+        if pad_h > 0 or pad_w > 0:
+            out = out[..., :h, :w]
+            
+        return out
 
     def _denormalize_targets(self, tensor: torch.Tensor) -> torch.Tensor:
         if self._target_mean is None or self._target_std is None:
@@ -42,7 +60,12 @@ class GfsToEra5LightningModule(pl.LightningModule):
     def _shared_step(self, batch: tuple[torch.Tensor, torch.Tensor], stage: str) -> torch.Tensor:
         x, y = batch
         y_hat = self(x)
-        loss = F.l1_loss(y_hat, y)
+        
+        # Combined L1 + MSE loss for sharper gradients
+        l1_loss = F.l1_loss(y_hat, y)
+        mse_loss = F.mse_loss(y_hat, y)
+        loss = 0.5 * l1_loss + 0.5 * mse_loss
+        
         self.log(f"{stage}_loss", loss, prog_bar=(stage == "train"), on_epoch=True, on_step=False)
 
         y_hat_real = self._denormalize_targets(y_hat)
@@ -73,4 +96,14 @@ class GfsToEra5LightningModule(pl.LightningModule):
         self._shared_step(batch, "test")
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=5
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss",
+            },
+        }

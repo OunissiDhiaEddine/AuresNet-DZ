@@ -125,6 +125,7 @@ def main(cfg: DictConfig) -> None:
         out_channels=model_cfg.out_channels,
         encoder_name=model_cfg.encoder_name,
         encoder_weights=model_cfg.encoder_weights,
+        architecture=cfg.model.get("architecture", "unet"),
     )
     if bool(cfg.train.torch_compile):
         net = torch.compile(net, mode=str(cfg.train.torch_compile_mode))

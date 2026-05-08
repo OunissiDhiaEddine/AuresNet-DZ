@@ -39,12 +39,6 @@ pip install -e .
 python -m auresnet_dz.train.train
 ```
 
-Or with the helper script:
-
-```bash
-bash scripts/run_local_gpu.sh
-```
-
 ## Local RTX training (recommended)
 
 1) Create and activate a local environment:
@@ -77,16 +71,10 @@ This writes:
 - `data/processed/gfs_aures_ready.nc`
 - `data/processed/era5_aures_ready.nc`
 
-5) Run a smoke test:
+5) Run full local training:
 
 ```bash
-bash scripts/run_local_gpu.sh train.max_epochs=1 data.batch_size=1
-```
-
-6) Run full local training:
-
-```bash
-bash scripts/run_local_gpu.sh train.max_epochs=120 train.precision=32-true data.batch_size=8
+python -m auresnet_dz.train.train train.max_epochs=100 train.precision=32-true data.batch_size=8 experiment_name=optimized_v2
 ```
 
 ### Performance notes (RTX)
@@ -104,13 +92,13 @@ bash scripts/run_local_gpu.sh data.batch_size=4
 - If memory allows, increase throughput:
 
 ```bash
-bash scripts/run_local_gpu.sh data.batch_size=12 data.num_workers=8
+python -m auresnet_dz.train.train data.batch_size=4
 ```
 
-### Important security note
+- If memory allows, increase throughput:
 
-- Keep credentials in `.env` only.
-- `.env` is git-ignored.
+```bash
+python -m auresnet_dz.train.train
 - If a key was exposed previously, rotate it.
 
 ## Data conventions (current default)

@@ -1,86 +1,86 @@
 # AURESNET-DZ TRAINING RESULTS
 
-*Generated: 2026-05-06 22:31:04*
+*Generated: 2026-05-08 11:06:48*
 
 ## Run Information
-**Run directory**: `logs\auresnet_dz_gfs_baseline\version_0`
+**Run directory**: `logs\auresnet_dz_optimized_v4\version_0`
 
 ## Hyperparameters
 - **learning_rate**: 0.0002
 - **weight_decay**: 1e-05
 
 ## Saved Checkpoints
-- `last.ckpt` (280.0 MB)
-- `epoch=112-step=1921.ckpt` (280.0 MB)
-- `epoch=110-step=1887.ckpt` (280.0 MB)
+- `last.ckpt` (561.2 MB)
+- `epoch=99-step=1700.ckpt` (561.2 MB)
+- `epoch=97-step=1666.ckpt` (561.2 MB)
 
 ## Metrics Overview
 **Scalar tags found**: 25
 
 ## Train Loss (Step)
-- **Initial**: 0.7561
-- **Final**: 0.1832
-- **Change**: -75.77%
-- **Steps**: 204
+- **Initial**: 0.6435
+- **Final**: 0.0515
+- **Change**: -91.99%
+- **Steps**: 170
 
 ## Validation MAE
-- **Initial**: 348.2122
-- **Best**: 52.1258 (step 1886)
-- **Final**: 53.6219
-- **Improvement to best**: 85.03%
+- **Initial**: 390.3716
+- **Best**: 55.9449 (step 1665)
+- **Final**: 56.0536
+- **Improvement to best**: 85.67%
 
 ## Train MAE
-- **Initial**: 385.5288
-- **Final**: 58.2640
+- **Initial**: 402.1576
+- **Final**: 47.0602
 
 
 ## Train MAE by Variable
-- **sp**: 288.9228
-- **t2m**: 1.4540
-- **tp**: 5.681e-05
-- **u10**: 0.4033
-- **v10**: 0.5398
+- **sp**: 234.2359
+- **t2m**: 0.6688
+- **tp**: 2.314e-05
+- **u10**: 0.1766
+- **v10**: 0.2198
 
 ## Test Metrics
-- **test_loss**: 0.2190
-- **test_mae**: 49.3775
-- **test_mae/sp**: 244.3676
-- **test_mae/t2m**: 1.5574
-- **test_mae/tp**: 4.379e-05
-- **test_mae/u10**: 0.4671
-- **test_mae/v10**: 0.4956
+- **test_loss**: 0.1527
+- **test_mae**: 57.5583
+- **test_mae/sp**: 285.7465
+- **test_mae/t2m**: 1.1973
+- **test_mae/tp**: 3.420e-05
+- **test_mae/u10**: 0.4362
+- **test_mae/v10**: 0.4117
 
 
 ## Validation MAE by Variable
-- **sp**: 265.7809
-- **t2m**: 1.4622
-- **tp**: 1.292e-05
-- **u10**: 0.3865
-- **v10**: 0.4800
+- **sp**: 278.2048
+- **t2m**: 1.2866
+- **tp**: 1.747e-05
+- **u10**: 0.3635
+- **v10**: 0.4130
 
 
 ## Test MAE by Variable
-- **sp**: 244.3676
-- **t2m**: 1.5574
-- **tp**: 4.379e-05
-- **u10**: 0.4671
-- **v10**: 0.4956
+- **sp**: 285.7465
+- **t2m**: 1.1973
+- **tp**: 3.420e-05
+- **u10**: 0.4362
+- **v10**: 0.4117
 
 ## Baseline Skill vs Raw GFS (Test Split)
-- **sp**: model=244.3676 | raw_gfs=514.9163 | improvement=52.54%
-- **t2m**: model=1.5574 | raw_gfs=2.0446 | improvement=23.83%
-- **tp**: model=4.379e-05 | raw_gfs=2.818e-04 | improvement=84.46%
-- **u10**: model=0.4671 | raw_gfs=0.8041 | improvement=41.90%
-- **v10**: model=0.4956 | raw_gfs=0.7611 | improvement=34.89%
+- **sp**: model=285.7465 | raw_gfs=514.9163 | improvement=44.51%
+- **t2m**: model=1.1973 | raw_gfs=2.0446 | improvement=41.44%
+- **tp**: model=3.420e-05 | raw_gfs=2.818e-04 | improvement=87.87%
+- **u10**: model=0.4362 | raw_gfs=0.8041 | improvement=45.75%
+- **v10**: model=0.4117 | raw_gfs=0.7611 | improvement=45.91%
 
 ## Generalization Snapshot
-- **Final train_mae**: 58.2640
-- **Final val_mae**: 53.6219
-- **Gap (val-train)**: -4.6420
+- **Final train_mae**: 47.0602
+- **Final val_mae**: 56.0536
+- **Gap (val-train)**: 8.9934
 
 ## Latest Checkpoint Summary
-- **Epoch**: 112
-- **Global step**: 1921
+- **Epoch**: 99
+- **Global step**: 1700
 
 ## Available Scalar Tags
 ```

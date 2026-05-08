@@ -1,6 +1,6 @@
-max_epochs: 30
-learning_rate: 0.0003
-weight_decay: 0.00001
+max_epochs: 50
+learning_rate: 0.0001
+weight_decay: 0.0001
 
 require_gpu: true
 accelerator: gpu

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Display dynamic training results from the latest AuresNet-DZ run artifacts."""
 
 from __future__ import annotations
@@ -399,8 +399,9 @@ def main() -> None:
     print("=" * 80)
     print("\n".join(lines))
     print("\n" + "=" * 80)
-    print(f"✓ Results saved to: {output_file.resolve()}\n")
+    print(f"âœ“ Results saved to: {output_file.resolve()}\n")
 
 
 if __name__ == "__main__":
     main()
+
