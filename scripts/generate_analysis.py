@@ -77,9 +77,26 @@ def main():
     era5_ds = xr.open_dataset("data/processed/era5_aures_ready.nc")
     
     target_date = np.datetime64(args.date)
+    
+    # Strict date checking to prevent "nearest" picking future/past dates
+    gfs_times = gfs_ds.time.values
+    if target_date < gfs_times.min() or target_date > gfs_times.max():
+        print(f"Error: Date {args.date} is outside the dataset range!")
+        print(f"Available range: {gfs_times.min()} to {gfs_times.max()}")
+        return
+
     try:
+        # Now we can safely use nearest or exact
         gfs_step = gfs_ds.sel(time=target_date, method='nearest')
         era5_step = era5_ds.sel(time=target_date, method='nearest')
+        
+        # Verify if the nearest date is actually the one requested (within 1 day)
+        actual_date = gfs_step.time.values
+        diff_days = np.abs(actual_date - target_date) / np.timedelta64(1, 'D')
+        if diff_days > 0.5:
+            print(f"Error: No exact match for {args.date}. Nearest available is {actual_date}")
+            return
+            
     except Exception as e:
         print(f"Error selecting date {args.date}: {e}")
         return
