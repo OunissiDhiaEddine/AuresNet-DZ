@@ -18,12 +18,15 @@ env/
 
 # Data artifacts
 data/raw/
-data/interim/
 data/processed/
 checkpoints/
 logs/
-wandb/
 outputs/
+*.nc
+*.ckpt
+
+wandb/
+
 multirun/
 
 # Notebook / editor
