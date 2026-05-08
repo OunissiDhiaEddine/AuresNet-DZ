@@ -1,115 +1,56 @@
-# AuresNet-DZ
+# AuresNet-DZ: AI-Enhanced Weather Downscaling for Algeria
 
-Bias-correction / post-processing model for GFS outputs over the Aures region (North-East Algeria), using ERA5 as target truth.
+A deep learning framework to bias-correct and downscale Global Forecast System (GFS) outputs (0.25°) to high-resolution ERA5-like accuracy (0.1°) specifically for the Aures mountain range in North-East Algeria.
 
-Core mapping objective:
+## Core Objective
 
-$$
-f(\text{GFS}) \approx \text{ERA5}
-$$
+The model learns a mapping to correct systematic biases in GFS caused by complex orography:
+$$ f(\text{GFS}) \approx \text{ERA5} $$
 
-## Stack
+## Project Structure
 
-- Data: `xarray`, `dask`, `netCDF4`, `h5netcdf`, `xesmf`
-- ML: `PyTorch`, `PyTorch Lightning`, `segmentation-models-pytorch` (U-Net)
-- Config: `Hydra` + YAML
+- [src/auresnet_dz/](src/auresnet_dz/): Core Python package containing models, data modules, and training logic.
+- [configs/](configs/): Hydra-based configuration system for models, datasets, and training loops.
+- [scripts/](scripts/): Utility scripts for data preparation and analysis.
+- [analysis_results/](analysis_results/): Generated metrics, error maps, and comparison plots.
+- [checkpoints/](checkpoints/): Model weight files (`.ckpt`).
 
-## Runtime mode
+## Quick Start
 
-- Local console only (no cloud/Colab workflow in this repository).
-
-## Initial project layout
-
-- [configs](configs)
-- [src/auresnet_dz](src/auresnet_dz)
-- [scripts](scripts)
-
-## Quick start
-
-1) Create and activate a virtual environment.
-2) Install package in editable mode:
-
-```bash
+### 1. Environment Setup
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 pip install -e .
 ```
 
-3) Launch training with default configs:
-
-```bash
-python -m auresnet_dz.train.train
-```
-
-## Local RTX training (recommended)
-
-1) Create and activate a local environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-2) Install dependencies:
-
-```bash
-pip install --upgrade pip
-pip install -e .
-```
-
-3) Place datasets locally:
-
-- `data/raw/gfs/**/*.nc`
-- `data/raw/era5/*.nc`
-
-4) Prepare train-ready aligned files (GFS variable mapping + Aures grid alignment):
-
-```bash
+### 2. Data Preparation
+Align GFS and ERA5 data to the Aures grid:
+```powershell
 python scripts/prepare_aures_data.py
 ```
 
-This writes:
+### 3. Execution
+- **Training**:
+  ```powershell
+  python -m auresnet_dz.train.train train.max_epochs=100
+  ```
+- **Analysis & Reporting**:
+  Run the inference and generate the HTML dashboard:
+  ```powershell
+  python scripts/generate_analysis.py --date "2023-01-18" --ckpt checkpoints/last.ckpt
+  ```
+- **View Dashboard**: Open [analysis_report.html](analysis_report.html) in your browser.
 
-- `data/processed/gfs_aures_ready.nc`
-- `data/processed/era5_aures_ready.nc`
+## Performance Analysis Suite
 
-5) Run full local training:
+The project includes a comprehensive analysis suite that generates:
+- **Weather App Dashboard**: Real-time comparison of GFS vs AI vs Truth in `analysis_report.html`.
+- **Improvement Metrics**: Automatically calculates % error reduction (RMSE, MAE, Bias).
+- **Error Maps**: Visualizes exactly where the model improves over the baseline (e.g., in high-altitude zones).
 
-```bash
-python -m auresnet_dz.train.train train.max_epochs=100 train.precision=32-true data.batch_size=8 experiment_name=optimized_v2
-```
-
-### Performance notes (RTX)
-
-- Default training profile is `train: local_gpu` in [configs/config.yaml](configs/config.yaml).
-- Training now normalizes each variable using train-split statistics, then reports MAE per variable in original units.
-- It uses `train.precision=32-true` to avoid FP16 overflow on large-magnitude channels like `sp`.
-- Local GPU optimizations (TF32 + cuDNN benchmark) remain enabled.
-- If your GPU memory is tight, reduce batch size:
-
-```bash
-bash scripts/run_local_gpu.sh data.batch_size=4
-```
-
-- If memory allows, increase throughput:
-
-```bash
-python -m auresnet_dz.train.train data.batch_size=4
-```
-
-- If memory allows, increase throughput:
-
-```bash
-python -m auresnet_dz.train.train
-- If a key was exposed previously, rotate it.
-
-## Data conventions (current default)
-
-- Inputs: GFS-derived channels in netCDF (`t2m`, `wind10`, optional `sp`)
-- Targets: ERA5 variables in netCDF
-- Canonical channels: `t2m`, `wind10` (optional `sp`)
-- Spatial alignment: IDW regridding on the Aures ERA5 grid
-- Temporal alignment: intersection on timestamps
-
-## Notes
-
-- Keep raw datasets out of git. Put them under local `data/raw/`.
-- If you use CDS/Copernicus credentials, store them in `.env` (never commit secrets).
+## Stack
+- **Framework**: PyTorch Lightning
+- **Architecture**: SMP U-Net (ResNet backbone)
+- **Data**: Xarray, Dask, NetCDF4
+- **Config**: Hydra
