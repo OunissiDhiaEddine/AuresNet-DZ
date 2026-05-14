@@ -8,6 +8,8 @@ import torch
 import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import seaborn as sns
 from pathlib import Path
 import argparse
@@ -77,9 +79,26 @@ def main():
     era5_ds = xr.open_dataset("data/processed/era5_aures_ready.nc")
     
     target_date = np.datetime64(args.date)
+    
+    # Strict date checking to prevent "nearest" picking future/past dates
+    gfs_times = gfs_ds.time.values
+    if target_date < gfs_times.min() or target_date > gfs_times.max():
+        print(f"Error: Date {args.date} is outside the dataset range!")
+        print(f"Available range: {gfs_times.min()} to {gfs_times.max()}")
+        return
+
     try:
+        # Now we can safely use nearest or exact
         gfs_step = gfs_ds.sel(time=target_date, method='nearest')
         era5_step = era5_ds.sel(time=target_date, method='nearest')
+        
+        # Verify if the nearest date is actually the one requested (within 1 day)
+        actual_date = gfs_step.time.values
+        diff_days = np.abs(actual_date - target_date) / np.timedelta64(1, 'D')
+        if diff_days > 0.5:
+            print(f"Error: No exact match for {args.date}. Nearest available is {actual_date}")
+            return
+            
     except Exception as e:
         print(f"Error selecting date {args.date}: {e}")
         return
@@ -129,8 +148,13 @@ def main():
         print(f"  Model range: {pred_data[i].min():.6f} to {pred_data[i].max():.6f}")
         if var == 'tp':
             print(f"  Normalized Pred TP: {pred_tensor_norm[0, i].min().item():.6f} to {pred_tensor_norm[0, i].max().item():.6f}")
+    # Spatial coordinates for plotting
+    lats = era5_step.lat.values
+    lons = era5_step.lon.values
+    extent = [4.5, 8.5, 35, 36.5] # [lon_min, lon_max, lat_min, lat_max]
+
     for i, var in enumerate(vars):
-        plt.figure(figsize=(18, 5))
+        fig = plt.figure(figsize=(24, 6))
         
         # Determine color scale
         vmin = min(gfs_data[i].min(), era5_step[var].values.min(), pred_data[i].min())
@@ -142,32 +166,41 @@ def main():
             vmin = 0 # Precip shouldn't be negative in plot
             vmax = max(vmax, 0.0001) # Ensure scale is visible even for small amounts
         
+        def setup_map(ax, title):
+            ax.set_extent(extent, crs=ccrs.PlateCarree())
+            ax.add_feature(cfeature.BORDERS, linestyle=':')
+            ax.add_feature(cfeature.COASTLINE)
+            gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.5)
+            gl.top_labels = False
+            gl.right_labels = False
+            ax.set_title(title)
+
         # GFS
-        plt.subplot(1, 4, 1)
-        plt.imshow(gfs_data[i], cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.title(f"GFS Baseline ({var})")
-        plt.colorbar()
+        ax1 = fig.add_subplot(1, 4, 1, projection=ccrs.PlateCarree())
+        im1 = ax1.pcolormesh(lons, lats, gfs_data[i], cmap=cmap, vmin=vmin, vmax=vmax, transform=ccrs.PlateCarree(), shading='auto')
+        setup_map(ax1, f"GFS Baseline ({var})")
+        plt.colorbar(im1, ax=ax1, shrink=0.7)
 
         # ERA5
-        plt.subplot(1, 4, 2)
-        plt.imshow(era5_step[var].values, cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.title(f"ERA5 Truth ({var})")
-        plt.colorbar()
+        ax2 = fig.add_subplot(1, 4, 2, projection=ccrs.PlateCarree())
+        im2 = ax2.pcolormesh(lons, lats, era5_step[var].values, cmap=cmap, vmin=vmin, vmax=vmax, transform=ccrs.PlateCarree(), shading='auto')
+        setup_map(ax2, f"ERA5 Truth ({var})")
+        plt.colorbar(im2, ax=ax2, shrink=0.7)
 
         # Model
-        plt.subplot(1, 4, 3)
-        plt.imshow(pred_data[i], cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.title(f"AuresNet Predicted ({var})")
-        plt.colorbar()
+        ax3 = fig.add_subplot(1, 4, 3, projection=ccrs.PlateCarree())
+        im3 = ax3.pcolormesh(lons, lats, pred_data[i], cmap=cmap, vmin=vmin, vmax=vmax, transform=ccrs.PlateCarree(), shading='auto')
+        setup_map(ax3, f"AuresNet Predicted ({var})")
+        plt.colorbar(im3, ax=ax3, shrink=0.7)
 
         # Error Comparison
-        plt.subplot(1, 4, 4)
+        ax4 = fig.add_subplot(1, 4, 4, projection=ccrs.PlateCarree())
         error_gfs = np.abs(gfs_data[i] - era5_step[var].values)
         error_model = np.abs(pred_data[i] - era5_step[var].values)
         gain = error_gfs - error_model
-        plt.imshow(gain, cmap='RdYlGn')
-        plt.title(f"Performance Gain (AI vs GFS)\nGreen = AI improves")
-        plt.colorbar()
+        im4 = ax4.pcolormesh(lons, lats, gain, cmap='RdYlGn', transform=ccrs.PlateCarree(), shading='auto')
+        setup_map(ax4, f"Performance Gain (AI vs GFS)\nGreen = AI improves")
+        plt.colorbar(im4, ax=ax4, shrink=0.7)
 
         plt.tight_layout()
         plt.savefig(f"{args.output_dir}/{var}_comparison.png")
