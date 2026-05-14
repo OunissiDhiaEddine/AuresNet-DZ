@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "GFS to ERA5 post-processing for the Aures (NE Algeria) region"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-only" }
 authors = [{ name = "AuresNet-DZ Team" }]
 dependencies = [
   "numpy>=1.26",
@@ -32,6 +32,7 @@ dependencies = [
   "tqdm>=4.66",
   "tensorboard>=2.16",
   "matplotlib>=3.8",
+  "seaborn>=0.13.2",
 ]
 
 [tool.setuptools]
